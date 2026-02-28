@@ -71,20 +71,29 @@ def main(config: DictConfig):
             decoder=config.decoder,
         )
 
-    # Instantiate LightningDataModule
+       # Instantiate LightningDataModule
     log.info(f"Instantiating LightningDataModule {config.datamodule}")
-    datamodule = instantiate(
-        config.datamodule,
-        batch_size=config.batch_size,
-        num_workers=config.num_workers,
-        train_sessions=_full_session_paths(config.dataset.train),
-        val_sessions=_full_session_paths(config.dataset.val),
-        test_sessions=_full_session_paths(config.dataset.test),
-        train_transform=_build_transform(config.transforms.train),
-        val_transform=_build_transform(config.transforms.val),
-        test_transform=_build_transform(config.transforms.test),
-        _convert_="object",
+
+    # Hydra 1.3 + OmegaConf 2.3 can raise internal assertions when merging kwargs
+    # into structured configs during instantiate(). Work around by converting the
+    # datamodule config to a plain container, injecting kwargs, then instantiating.
+    datamodule_cfg = OmegaConf.to_container(config.datamodule, resolve=True)
+    assert isinstance(datamodule_cfg, dict)
+
+    datamodule_cfg.update(
+        dict(
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+            train_sessions=_full_session_paths(config.dataset.train),
+            val_sessions=_full_session_paths(config.dataset.val),
+            test_sessions=_full_session_paths(config.dataset.test),
+            train_transform=_build_transform(config.transforms.train),
+            val_transform=_build_transform(config.transforms.val),
+            test_transform=_build_transform(config.transforms.test),
+        )
     )
+
+    datamodule = instantiate(datamodule_cfg, _convert_="object")
 
     # Instantiate callbacks
     callback_configs = config.get("callbacks", [])
