@@ -13,7 +13,7 @@ from typing import Any
 
 import hydra
 import pytorch_lightning as pl
-from hydra.utils import get_original_cwd, instantiate
+from hydra.utils import get_class, get_original_cwd, instantiate
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from emg2qwerty import transforms, utils
@@ -71,29 +71,26 @@ def main(config: DictConfig):
             decoder=config.decoder,
         )
 
-       # Instantiate LightningDataModule
+    # Instantiate LightningDataModule
     log.info(f"Instantiating LightningDataModule {config.datamodule}")
 
-    # Hydra 1.3 + OmegaConf 2.3 can raise internal assertions when merging kwargs
-    # into structured configs during instantiate(). Work around by converting the
-    # datamodule config to a plain container, injecting kwargs, then instantiating.
-    datamodule_cfg = OmegaConf.to_container(config.datamodule, resolve=True)
-    assert isinstance(datamodule_cfg, dict)
+    dm_conf = OmegaConf.to_container(config.datamodule, resolve=True)
+    assert isinstance(dm_conf, dict)
 
-    datamodule_cfg.update(
-        dict(
-            batch_size=config.batch_size,
-            num_workers=config.num_workers,
-            train_sessions=_full_session_paths(config.dataset.train),
-            val_sessions=_full_session_paths(config.dataset.val),
-            test_sessions=_full_session_paths(config.dataset.test),
-            train_transform=_build_transform(config.transforms.train),
-            val_transform=_build_transform(config.transforms.val),
-            test_transform=_build_transform(config.transforms.test),
-        )
+    target = dm_conf.pop("_target_")
+    dm_cls = get_class(target)
+
+    datamodule = dm_cls(
+        **dm_conf,
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        train_sessions=_full_session_paths(config.dataset.train),
+        val_sessions=_full_session_paths(config.dataset.val),
+        test_sessions=_full_session_paths(config.dataset.test),
+        train_transform=_build_transform(config.transforms.train),
+        val_transform=_build_transform(config.transforms.val),
+        test_transform=_build_transform(config.transforms.test),
     )
-
-    datamodule = instantiate(datamodule_cfg, _convert_="object")
 
     # Instantiate callbacks
     callback_configs = config.get("callbacks", [])
