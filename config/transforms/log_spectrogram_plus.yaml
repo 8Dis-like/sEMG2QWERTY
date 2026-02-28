@@ -1,4 +1,4 @@
-# @package _global_
+# @package transforms
 
 # Base conversion
 to_tensor:
@@ -63,7 +63,7 @@ temporal_jitter:
 logspec:
   _target_: emg2qwerty.transforms.LogSpectrogram
   n_fft: 64
-  hop_length: 16  # Downsamples from 2kHz to 125Hz
+  hop_length: 16  # Downsamples from 2kHz to 125Hz spectrogram
 
 # -------- Spectrogram-domain augmentation --------
 freq_eq:
@@ -79,23 +79,22 @@ specaug:
   n_freq_masks: 2
   freq_mask_param: 4
 
-transforms:
-  train:
-    - ${to_tensor}
-    - ${gain}
-    - ${gaussian_noise}
-    - ${burst_noise}
-    - ${channel_dropout}
-    - ${temporal_channel_dropout}
-    - ${time_warp}
-    - ${band_rotation}
-    - ${temporal_jitter}
-    - ${logspec}
-    - ${freq_eq}
-    - ${specaug}
+train:
+  - ${to_tensor}
+  - ${gain}
+  - ${gaussian_noise}
+  - ${burst_noise}
+  - ${channel_dropout}
+  - ${temporal_channel_dropout}
+  - ${time_warp}
+  - ${band_rotation}
+  - ${temporal_jitter}
+  - ${logspec}
+  - ${freq_eq}
+  - ${specaug}
 
-  val:
-    - ${to_tensor}
-    - ${logspec}
+val:
+  - ${to_tensor}
+  - ${logspec}
 
-  test: ${transforms.val}
+test: ${val}
