@@ -5,7 +5,6 @@ to_tensor:
   _target_: emg2qwerty.transforms.ToTensor
   fields: [emg_left, emg_right]
 
-# -------- Raw-domain augmentations (train only) --------
 gain:
   _target_: emg2qwerty.transforms.RandomGain
   min_gain: 0.8
@@ -48,24 +47,21 @@ time_warp:
   max_rate: 1.05
   mode: linear
 
-# -------- Existing augmentations --------
 band_rotation:
-  _target_: emg2qwerty.transforms.ForEach  # i.i.d rotation offset for each band
+  _target_: emg2qwerty.transforms.ForEach
   transform:
     _target_: emg2qwerty.transforms.RandomBandRotation
     offsets: [-1, 0, 1]
 
 temporal_jitter:
   _target_: emg2qwerty.transforms.TemporalAlignmentJitter
-  max_offset: 120  # Max 60ms jitter for 2kHz EMG
+  max_offset: 120
 
-# -------- Feature extraction --------
 logspec:
   _target_: emg2qwerty.transforms.LogSpectrogram
   n_fft: 64
-  hop_length: 16  # Downsamples from 2kHz to 125Hz spectrogram
+  hop_length: 16
 
-# -------- Spectrogram-domain augmentation --------
 freq_eq:
   _target_: emg2qwerty.transforms.RandomFrequencyEQ
   p: 0.3
@@ -75,26 +71,26 @@ freq_eq:
 specaug:
   _target_: emg2qwerty.transforms.SpecAugment
   n_time_masks: 3
-  time_mask_param: 25  # Max 200ms per time mask for 125Hz spectrogram
+  time_mask_param: 25
   n_freq_masks: 2
   freq_mask_param: 4
 
 train:
-  - ${to_tensor}
-  - ${gain}
-  - ${gaussian_noise}
-  - ${burst_noise}
-  - ${channel_dropout}
-  - ${temporal_channel_dropout}
-  - ${time_warp}
-  - ${band_rotation}
-  - ${temporal_jitter}
-  - ${logspec}
-  - ${freq_eq}
-  - ${specaug}
+  - ${transforms.to_tensor}
+  - ${transforms.gain}
+  - ${transforms.gaussian_noise}
+  - ${transforms.burst_noise}
+  - ${transforms.channel_dropout}
+  - ${transforms.temporal_channel_dropout}
+  - ${transforms.time_warp}
+  - ${transforms.band_rotation}
+  - ${transforms.temporal_jitter}
+  - ${transforms.logspec}
+  - ${transforms.freq_eq}
+  - ${transforms.specaug}
 
 val:
-  - ${to_tensor}
-  - ${logspec}
+  - ${transforms.to_tensor}
+  - ${transforms.logspec}
 
-test: ${val}
+test: ${transforms.val}
