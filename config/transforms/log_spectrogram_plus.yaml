@@ -41,12 +41,15 @@ train:
     mode: linear
 
   - _target_: emg2qwerty.transforms.ForEach
+    dim: 1
     transform:
       _target_: emg2qwerty.transforms.RandomBandRotation
       offsets: [-1, 0, 1]
+      channel_dim: -1
 
   - _target_: emg2qwerty.transforms.TemporalAlignmentJitter
     max_offset: 120
+    stack_dim: 1
 
   - _target_: emg2qwerty.transforms.LogSpectrogram
     n_fft: 64
@@ -56,6 +59,7 @@ train:
     p: 0.3
     max_db: 0.15
     n_control_points: 6
+    freq_dim: -1
 
   - _target_: emg2qwerty.transforms.SpecAugment
     n_time_masks: 3
@@ -71,4 +75,11 @@ val:
     n_fft: 64
     hop_length: 16
 
-test: ${transforms.val}
+# Avoid interpolation aliasing; just duplicate val to be maximally safe.
+test:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+
+  - _target_: emg2qwerty.transforms.LogSpectrogram
+    n_fft: 64
+    hop_length: 16
