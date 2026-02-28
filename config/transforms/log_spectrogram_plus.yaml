@@ -1,0 +1,101 @@
+# @package _global_
+
+# Base conversion
+to_tensor:
+  _target_: emg2qwerty.transforms.ToTensor
+  fields: [emg_left, emg_right]
+
+# -------- Raw-domain augmentations (train only) --------
+gain:
+  _target_: emg2qwerty.transforms.RandomGain
+  min_gain: 0.8
+  max_gain: 1.25
+  per_channel: true
+  per_band: true
+
+gaussian_noise:
+  _target_: emg2qwerty.transforms.AdditiveGaussianNoise
+  min_sigma: 0.0
+  max_sigma: 0.02
+  per_channel: false
+
+burst_noise:
+  _target_: emg2qwerty.transforms.RandomBurstNoise
+  p: 0.15
+  max_bursts: 2
+  min_duration: 10
+  max_duration: 80
+  min_sigma: 0.02
+  max_sigma: 0.08
+
+channel_dropout:
+  _target_: emg2qwerty.transforms.ChannelDropout
+  p: 0.05
+  value: 0.0
+
+temporal_channel_dropout:
+  _target_: emg2qwerty.transforms.TemporalChannelDropout
+  p: 0.2
+  num_drops: 2
+  min_duration: 10
+  max_duration: 120
+  value: 0.0
+
+time_warp:
+  _target_: emg2qwerty.transforms.RandomTimeWarp
+  p: 0.2
+  min_rate: 0.95
+  max_rate: 1.05
+  mode: linear
+
+# -------- Existing augmentations --------
+band_rotation:
+  _target_: emg2qwerty.transforms.ForEach  # i.i.d rotation offset for each band
+  transform:
+    _target_: emg2qwerty.transforms.RandomBandRotation
+    offsets: [-1, 0, 1]
+
+temporal_jitter:
+  _target_: emg2qwerty.transforms.TemporalAlignmentJitter
+  max_offset: 120  # Max 60ms jitter for 2kHz EMG
+
+# -------- Feature extraction --------
+logspec:
+  _target_: emg2qwerty.transforms.LogSpectrogram
+  n_fft: 64
+  hop_length: 16  # Downsamples from 2kHz to 125Hz
+
+# -------- Spectrogram-domain augmentation --------
+freq_eq:
+  _target_: emg2qwerty.transforms.RandomFrequencyEQ
+  p: 0.3
+  max_db: 0.15
+  n_control_points: 6
+
+specaug:
+  _target_: emg2qwerty.transforms.SpecAugment
+  n_time_masks: 3
+  time_mask_param: 25  # Max 200ms per time mask for 125Hz spectrogram
+  n_freq_masks: 2
+  freq_mask_param: 4
+
+transforms:
+  train:
+    - ${to_tensor}
+    - ${gain}
+    - ${gaussian_noise}
+    - ${burst_noise}
+    - ${channel_dropout}
+    - ${temporal_channel_dropout}
+    - ${time_warp}
+    - ${band_rotation}
+    - ${temporal_jitter}
+    - ${logspec}
+    - ${freq_eq}
+    - ${specaug}
+
+  val:
+    - ${to_tensor}
+    - ${logspec}
+
+  test: ${transforms.val}
