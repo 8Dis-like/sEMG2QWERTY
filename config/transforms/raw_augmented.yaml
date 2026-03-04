@@ -1,0 +1,63 @@
+# @package transforms
+
+# Raw-domain augmentations for models operating on raw sEMG (no spectrogram).
+# Use with: model=resnet_ctc transforms=raw_augmented
+
+train:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+
+  - _target_: emg2qwerty.transforms.RandomGain
+    min_gain: 0.8
+    max_gain: 1.25
+    per_channel: true
+    per_band: true
+
+  - _target_: emg2qwerty.transforms.AdditiveGaussianNoise
+    min_sigma: 0.0
+    max_sigma: 0.02
+    per_channel: false
+
+  - _target_: emg2qwerty.transforms.RandomBurstNoise
+    p: 0.15
+    max_bursts: 2
+    min_duration: 10
+    max_duration: 80
+    min_sigma: 0.02
+    max_sigma: 0.08
+
+  - _target_: emg2qwerty.transforms.ChannelDropout
+    p: 0.05
+    value: 0.0
+
+  - _target_: emg2qwerty.transforms.TemporalChannelDropout
+    p: 0.2
+    num_drops: 2
+    min_duration: 10
+    max_duration: 120
+    value: 0.0
+
+  - _target_: emg2qwerty.transforms.RandomTimeWarp
+    p: 0.2
+    min_rate: 0.95
+    max_rate: 1.05
+    mode: linear
+
+  - _target_: emg2qwerty.transforms.ForEach
+    dim: 1
+    transform:
+      _target_: emg2qwerty.transforms.RandomBandRotation
+      offsets: [-1, 0, 1]
+      channel_dim: -1
+
+  - _target_: emg2qwerty.transforms.TemporalAlignmentJitter
+    max_offset: 120
+    stack_dim: 1
+
+val:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+
+test:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]

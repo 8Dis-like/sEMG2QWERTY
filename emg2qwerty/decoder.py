@@ -14,8 +14,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field, InitVar
 from typing import Any, ClassVar
 
-import kenlm
 import numpy as np
+
+try:
+    import kenlm
+except ImportError:
+    kenlm = None  # Only needed for CTCBeamDecoder
 
 from emg2qwerty.charset import CharacterSet, charset
 from emg2qwerty.data import LabelData
@@ -258,7 +262,7 @@ class BeamState:
             self.hash_ = _hash
 
     @classmethod
-    def init(cls, blank_label: int, lm: kenlm.Model | None = None) -> BeamState:
+    def init(cls, blank_label: int, lm: "kenlm.Model | None" = None) -> BeamState:
         """Initialize a new BeamState with empty sequence (CTC blank label),
         probability of 1 for ending in blank and 0 for non-blank.
 
@@ -311,14 +315,14 @@ class BeamState:
         return [value[1] for value in self.label_node.values][1:]
 
     @property
-    def lm_state(self) -> kenlm.State:
+    def lm_state(self) -> "kenlm.State":
         """LM state corresponding to this beam state."""
         if self.lm_node is None:
             raise RuntimeError("Did you forget to call `init()` with lm?")
         return self.lm_node.value[0]
 
     @property
-    def lm_states(self) -> list[kenlm.State]:
+    def lm_states(self) -> "list[kenlm.State]":
         """Sequence of LM states in the path leading to this beam state."""
         if self.lm_node is None:
             raise RuntimeError("Did you forget to call `init()` with lm?")
@@ -332,7 +336,7 @@ class BeamState:
         return float(self.lm_node.value[1])
 
     @property
-    def lm_scores(self) -> list[kenlm.State]:
+    def lm_scores(self) -> "list[kenlm.State]":
         """Sequence of LM scores in the path leading to this beam state."""
         if self.lm_node is None:
             raise RuntimeError("Did you forget to call `init()` with lm?")
@@ -419,6 +423,12 @@ class CTCBeamDecoder(Decoder):
     delete_key: str | None = "Key.backspace"
 
     def __post_init__(self) -> None:
+        if kenlm is None:
+            raise ImportError(
+                "CTCBeamDecoder requires kenlm. Install it with: "
+                "pip install https://github.com/kpu/kenlm/archive/master.zip"
+            )
+
         # Initialize language model if provided
         self.lm: kenlm.Model | None = None
         if self.lm_path is not None:
