@@ -7,6 +7,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
+import hydra
 
 import numpy as np
 import pytorch_lightning as pl
@@ -27,7 +28,8 @@ from emg2qwerty.modules import (
     TDSConvEncoder,
 )
 from emg2qwerty.transforms import Transform
-
+from emg2qwerty.decoder import CTCGreedyDecoder
+from emg2qwerty.vis_transformer import ConvVit
 
 class WindowedEMGDataModule(pl.LightningDataModule):
     def __init__(
@@ -269,3 +271,120 @@ class TDSConvCTCModule(pl.LightningModule):
             optimizer_config=self.hparams.optimizer,
             lr_scheduler_config=self.hparams.lr_scheduler,
         )
+
+
+class ConvVitCTCModule(pl.LightningModule):
+    def __init__(
+        self,
+        n_filters1: int,
+        n_filters2: int = 128,
+        n_head: int = 8,
+        n_layers: int = 2,
+        optimizer: DictConfig = None,
+        lr_scheduler: DictConfig = None,
+        decoder: Any = None,
+        **kwargs
+    ) -> None:
+        super().__init__()
+        self.save_hyperparameters()
+
+        # Import your model from modules.py
+        
+        self.model = ConvVit(
+            n_filters1=n_filters1,
+            n_filters2=n_filters2,
+            n_head=n_head,
+            n_layers=n_layers,
+            n_classes=charset().num_classes
+        )
+
+        self.ctc_loss = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
+        
+        if isinstance(decoder, (dict, DictConfig)):
+            self.decoder = hydra.utils.instantiate(decoder)
+        elif decoder == "greedy":
+            self.decoder = CTCGreedyDecoder()
+        else:
+            self.decoder = decoder
+            
+        # Standard metrics setup
+        metrics = MetricCollection([CharacterErrorRates()])
+        self.metrics = nn.ModuleDict({
+            f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
+            for phase in ["train", "val", "test"]
+        })
+
+    def forward(self, x):
+        return self.model(x)
+    
+    def training_step(self, batch, batch_idx):
+        return self._step("train", batch)
+
+    def validation_step(self, batch, batch_idx):
+        return self._step("val", batch)
+
+    def test_step(self, batch, batch_idx):
+        return self._step("test", batch)
+
+    def configure_optimizers(self):
+        optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.parameters())
+        if self.hparams.lr_scheduler:
+            scheduler = hydra.utils.instantiate(self.hparams.lr_scheduler, optimizer=optimizer)
+            return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        return optimizer
+
+    def _step(self, phase: str, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        inputs = batch["inputs"] # [T, N, C, H, W]
+        targets = batch["targets"] # [S, N]
+        target_lengths = batch["target_lengths"]
+        
+        T, N, C, H, W = inputs.shape
+        logits = self.forward(inputs.reshape(-1, C, H, W)) # [T*N, 36, Classes]
+        
+        # Reshape to CTC format: [Time_Total, Batch, Classes]
+        emissions = logits.view(T, N, 36, -1).permute(0, 2, 1, 3).reshape(-1, N, charset().num_classes)
+        
+        # keep these on cpu, since CTCLoss requirement
+        T_total = emissions.shape[0]
+        emission_lengths = torch.full((N,), T_total, device="cpu", dtype=torch.long)
+        target_lengths_cpu = target_lengths.to("cpu", torch.long)
+
+        if targets.shape[0] > 0:
+            loss = self.ctc_loss(
+                log_probs=emissions,            
+                targets=targets.transpose(0, 1), 
+                input_lengths=emission_lengths,
+                target_lengths=target_lengths_cpu
+            )
+        else:
+            # Return a dummy loss if no targets present in this window
+            return torch.tensor(0.0, device=inputs.device, requires_grad=True)
+
+        self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True, prog_bar=True)
+        
+        if self.decoder is not None and phase != "train" and targets.shape[0] > 0:
+            
+            emissions_np = emissions.detach().cpu().numpy()
+            targets_np = targets.detach().cpu().numpy()
+            dummy_timestamps = np.arange(T_total) 
+            metrics = self.metrics[f"{phase}_metrics"]
+
+            for i in range(N):
+                self.decoder.reset()
+                item_emissions = emissions_np[:, i, :]
+                pred_label_data = self.decoder.decode(
+                    emissions=item_emissions,
+                    timestamps=dummy_timestamps
+                )
+
+                current_target_len = int(target_lengths_cpu[i])
+                current_target_labels = targets_np[:current_target_len, i]
+                target_label_data = LabelData.from_labels(current_target_labels)
+
+                metrics.update(prediction=pred_label_data, target=target_label_data)
+
+        return loss
+
+    def on_validation_epoch_end(self) -> None:
+        self.log_dict(self.metrics["val_metrics"].compute(), sync_dist=True)
+        self.metrics["val_metrics"].reset()

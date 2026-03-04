@@ -1,0 +1,9 @@
+# @package module
+_target_: emg2qwerty.lightning.ConvVitCTCModule
+n_filters1: 32
+n_filters2: 128
+n_head: 8
+n_layers: 2
+optimizer: ${optimizer}
+lr_scheduler: ${lr_scheduler}
+decoder: "greedy"
