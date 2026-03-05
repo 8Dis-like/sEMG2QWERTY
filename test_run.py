@@ -8,8 +8,9 @@ import sys
 
 import torch
 
-MODEL = "cnn_rnn_ctc"
-USER  = "single_user"
+MODEL      = "cnn_rnn_ctc"
+USER       = "single_user"
+TRANSFORMS = "log_spectrogram"   # or "log_spectrogram_plus"
 ACCELERATOR = "gpu" if torch.cuda.is_available() else "cpu"
 DEVICES     = torch.cuda.device_count() if torch.cuda.is_available() else 1
 
@@ -25,7 +26,7 @@ TESTS = [
         "Fast Dev Run (1 iteration, no checkpoints)",
         [
             sys.executable, "-m", "emg2qwerty.train",
-            f"model={MODEL}", f"user={USER}",
+            f"model={MODEL}", f"user={USER}", f"transforms={TRANSFORMS}",
             f"trainer.accelerator={ACCELERATOR}", f"trainer.devices={DEVICES}",
             "++trainer.fast_dev_run=True",
         ],
@@ -34,7 +35,7 @@ TESTS = [
         "Single Epoch (full pipeline + checkpoint saving)",
         [
             sys.executable, "-m", "emg2qwerty.train",
-            f"model={MODEL}", f"user={USER}",
+            f"model={MODEL}", f"user={USER}", f"transforms={TRANSFORMS}",
             f"trainer.accelerator={ACCELERATOR}", f"trainer.devices={DEVICES}",
             "++trainer.max_epochs=1",
         ],
