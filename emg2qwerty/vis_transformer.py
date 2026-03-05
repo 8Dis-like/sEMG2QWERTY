@@ -1,10 +1,8 @@
 import torch.nn as nn
 import torch
 
-
 # start with a few conv layers before the visual transformer
 # shape of data: [Time, Bands, Electrodes, Freq]
-# out: # 26 letters + space + blank (do we have numbers too?)
 
 class ConvVit(nn.Module):
     def __init__(self, in_channels = 2, n_filters1 = 32, n_filters2 = 128, kernel_size = 3, n_head = 8, n_layers = 2, n_classes = 28):
@@ -12,6 +10,9 @@ class ConvVit(nn.Module):
         # stem convolutional layers
         # note that around half of the activations of the conv layers are 0, and the reason is that batchnorm centers
         # around 0 and relu zeros them out. So use Leaky ReLU instead
+
+        self.input_norm = nn.InstanceNorm2d(in_channels)
+
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, n_filters1, kernel_size, stride = 2, padding=1),
             nn.BatchNorm2d(n_filters1),
@@ -48,9 +49,10 @@ class ConvVit(nn.Module):
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
     def forward(self, x):
+        x = self.input_norm(x)
         # x shape: [Batch, Channels, Height, Width] = [B, 2, 16, 33]
         x = self.stem(x) #[B, 128, 4, 9]
-        tokens = x.flatten(2).transpose(1, 2) # [B, 128, 4*9] -> [B,  4*9, 128]
+        tokens = x.permute(0, 3, 2, 1).flatten(1, 2) # [B, Time*Freq, Channels] 
         tokens = tokens + self.pos_embed
         vit_out = self.transformer(tokens) # [B,  4*9, 128]
         

@@ -288,14 +288,14 @@ class ConvVitCTCModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        # Import your model from modules.py
-        
+        self.chars = charset()
+
         self.model = ConvVit(
             n_filters1=n_filters1,
             n_filters2=n_filters2,
             n_head=n_head,
             n_layers=n_layers,
-            n_classes=charset().num_classes
+            n_classes=self.chars.num_classes
         )
 
         self.ctc_loss = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
@@ -338,27 +338,26 @@ class ConvVitCTCModule(pl.LightningModule):
         targets = batch["targets"] # [S, N]
         target_lengths = batch["target_lengths"]
         
-        T, N, C, H, W = inputs.shape
+        T_win, N, C, H, W = inputs.shape
+
         logits = self.forward(inputs.reshape(-1, C, H, W)) # [T*N, 36, Classes]
+        num_tokens = logits.shape[1]
         
         # Reshape to CTC format: [Time_Total, Batch, Classes]
-        emissions = logits.view(T, N, 36, -1).permute(0, 2, 1, 3).reshape(-1, N, charset().num_classes)
+        emissions = logits.view(T_win, N, num_tokens, -1)
+        emissions = emissions.permute(0, 2, 1, 3).reshape(-1, N, self.chars.num_classes)
         
         # keep these on cpu, since CTCLoss requirement
         T_total = emissions.shape[0]
-        emission_lengths = torch.full((N,), T_total, device="cpu", dtype=torch.long)
-        target_lengths_cpu = target_lengths.to("cpu", torch.long)
+        emission_lengths = torch.full((N,), T_total, device=inputs.device, dtype=torch.long)
 
-        if targets.shape[0] > 0:
-            loss = self.ctc_loss(
-                log_probs=emissions,            
-                targets=targets.transpose(0, 1), 
-                input_lengths=emission_lengths,
-                target_lengths=target_lengths_cpu
-            )
-        else:
-            # Return a dummy loss if no targets present in this window
-            return torch.tensor(0.0, device=inputs.device, requires_grad=True)
+        loss = self.ctc_loss(
+            log_probs=emissions,            
+            targets=targets.transpose(0, 1), 
+            input_lengths=emission_lengths,
+            target_lengths=target_lengths
+        )
+
 
         self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True, prog_bar=True)
         
@@ -377,7 +376,7 @@ class ConvVitCTCModule(pl.LightningModule):
                     timestamps=dummy_timestamps
                 )
 
-                current_target_len = int(target_lengths_cpu[i])
+                current_target_len = int(target_lengths[i])
                 current_target_labels = targets_np[:current_target_len, i]
                 target_label_data = LabelData.from_labels(current_target_labels)
 
