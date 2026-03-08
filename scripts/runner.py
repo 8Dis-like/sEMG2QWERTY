@@ -16,13 +16,12 @@ import json
 import os
 import subprocess
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from scripts.metrics import RunMetrics, read_tb_dir
-from scripts.plots  import plot_training_curves
+from scripts.plots  import plot_training_curves, plot_individual_curves
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -47,14 +46,17 @@ def run_experiment(config: dict) -> Optional[Path]:
     cmd = _build_command(config)
     print("  Command: " + " ".join(str(c) for c in cmd[2:]))  # skip python -m prefix
 
-    stamp  = time.time()
+    # Snapshot existing log dirs before training so we can identify the new one
+    # by set-difference rather than mtime (mtime is unreliable on Google Drive).
+    dirs_before = set(glob.glob("logs/*/*"))
+
     result = subprocess.run(cmd, check=False)
 
     if result.returncode != 0:
         print(f"  Training exited with code {result.returncode}.")
         return None
 
-    run_dir = _find_run_dir(created_after=stamp)
+    run_dir = _find_run_dir(dirs_before)
     if run_dir is None:
         print("  Could not locate run directory after training.")
         return None
@@ -73,6 +75,12 @@ def run_experiment(config: dict) -> Optional[Path]:
         metrics,
         name        = config["name"],
         output_path = run_dir / "training_curves.png",
+    )
+
+    plot_individual_curves(
+        metrics,
+        name       = config["name"],
+        curves_dir = run_dir / "curves",
     )
 
     _save_summary(config, metrics, run_dir, run_dir / "experiment_summary.json")
@@ -113,18 +121,21 @@ def _build_command(config: dict) -> list[str]:
 
 # ── Run-directory locator ─────────────────────────────────────────────────────
 
-def _find_run_dir(created_after: float) -> Optional[Path]:
-    """Return the most recently modified ``logs/YYYY-MM-DD/HH-MM-SS`` directory
-    that was created at or after *created_after* (Unix timestamp).
+def _find_run_dir(dirs_before: set[str]) -> Optional[Path]:
+    """Return the new ``logs/YYYY-MM-DD/HH-MM-SS`` directory created by the
+    training run, identified by set-difference from *dirs_before*.
 
-    A 5-second buffer is applied to tolerate minor filesystem timing differences.
+    Falls back to the most recently modified candidate if no new directory is
+    found (e.g. if the run reused an existing path).
     """
-    candidates = [
-        Path(p)
-        for p in glob.glob("logs/*/*")
-        if os.path.getmtime(p) >= created_after - 5
-    ]
-    return max(candidates, key=os.path.getmtime, default=None)
+    dirs_after = set(glob.glob("logs/*/*"))
+    new_dirs   = dirs_after - dirs_before
+
+    if not new_dirs:
+        print("  [WARNING] No new log directory detected — falling back to most-recently "
+              "modified directory. Results may be attributed to the wrong run.")
+    candidates = new_dirs if new_dirs else dirs_after
+    return max((Path(p) for p in candidates), key=os.path.getmtime, default=None)
 
 
 def _find_tb_dir(run_dir: Path) -> Optional[Path]:
@@ -143,18 +154,28 @@ def _save_summary(
 ) -> None:
     """Write ``experiment_summary.json`` to the run directory."""
 
-    # Collect only the hyperparameter keys that are relevant
+    # Keys that describe the model architecture / training recipe (used for
+    # CSV columns and the winner report).
     hp_keys = (
         "transforms", "batch_size", "lr_scheduler",
         "rnn_num_layers", "rnn_hidden_size", "rnn_bidirectional",
         "max_epochs", "seed",
     )
 
+    # Full config snapshot — every key that has a JSON-serialisable scalar
+    # value, so the run can be recreated exactly from this file alone.
+    _SKIP = {"name"}   # already stored as a top-level field
+    full_config = {
+        k: v for k, v in config.items()
+        if k not in _SKIP and isinstance(v, (str, int, float, bool, type(None)))
+    }
+
     summary = {
         "name":      config["name"],
         "run_id":    "/".join(run_dir.parts[-2:]),
         "timestamp": datetime.now().isoformat(),
         "model":     config["model"],
+        "full_config": full_config,
         "hyperparameters": {
             k: config[k] for k in hp_keys if k in config
         },
@@ -162,6 +183,9 @@ def _save_summary(
         "best_val_cer_epoch": metrics.best_val_cer_epoch,
         "test_cer":           metrics.test_cer,
         "test_loss":          metrics.test_loss,
+        "test_ier":           metrics.test_ier,
+        "test_der":           metrics.test_der,
+        "test_ser":           metrics.test_ser,
     }
 
     with open(output_path, "w") as f:

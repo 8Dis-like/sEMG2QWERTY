@@ -42,6 +42,21 @@ class RunMetrics:
     val_cer_epochs:   list[float] = field(default_factory=list)
     val_cer_vals:     list[float] = field(default_factory=list)
 
+    # ── IER / DER / SER (per epoch, train + val) ──────────────────────────────
+    train_ier_epochs: list[float] = field(default_factory=list)
+    train_ier_vals:   list[float] = field(default_factory=list)
+    train_der_epochs: list[float] = field(default_factory=list)
+    train_der_vals:   list[float] = field(default_factory=list)
+    train_ser_epochs: list[float] = field(default_factory=list)
+    train_ser_vals:   list[float] = field(default_factory=list)
+
+    val_ier_epochs:   list[float] = field(default_factory=list)
+    val_ier_vals:     list[float] = field(default_factory=list)
+    val_der_epochs:   list[float] = field(default_factory=list)
+    val_der_vals:     list[float] = field(default_factory=list)
+    val_ser_epochs:   list[float] = field(default_factory=list)
+    val_ser_vals:     list[float] = field(default_factory=list)
+
     # ── Learning rate (per epoch via LearningRateMonitor) ─────────────────────
     lr_epochs: list[float] = field(default_factory=list)
     lr_vals:   list[float] = field(default_factory=list)
@@ -51,6 +66,9 @@ class RunMetrics:
     best_val_cer_epoch: Optional[float] = None
     test_cer:           Optional[float] = None
     test_loss:          Optional[float] = None
+    test_ier:           Optional[float] = None
+    test_der:           Optional[float] = None
+    test_ser:           Optional[float] = None
 
     # ── Derived properties ────────────────────────────────────────────────────
 
@@ -105,12 +123,22 @@ def read_tb_dir(tb_dir: Path) -> Optional[RunMetrics]:
     vl_loss_s, vl_loss_v = load("val/loss")
     tr_cer_s,  tr_cer_v  = load("train/CER")
 
+    tr_ier_s, tr_ier_v = load("train/IER")
+    tr_der_s, tr_der_v = load("train/DER")
+    tr_ser_s, tr_ser_v = load("train/SER")
+    vl_ier_s, vl_ier_v = load("val/IER")
+    vl_der_s, vl_der_v = load("val/DER")
+    vl_ser_s, vl_ser_v = load("val/SER")
+
     # LearningRateMonitor logs as "lr-Adam", "lr-Adam/pg1", etc.
     lr_tag = next((t for t in sorted(tags) if t.lower().startswith("lr")), None)
     lr_s, lr_v = load(lr_tag) if lr_tag else ([], [])
 
     _, test_cer_v  = load("test/CER")
     _, test_loss_v = load("test/loss")
+    _, test_ier_v  = load("test/IER")
+    _, test_der_v  = load("test/DER")
+    _, test_ser_v  = load("test/SER")
 
     # val/loss may have multiple entries per epoch (one per validation batch,
     # all logged at the same global step).  Average duplicates for a cleaner curve.
@@ -130,12 +158,27 @@ def read_tb_dir(tb_dir: Path) -> Optional[RunMetrics]:
         train_cer_vals    = tr_cer_v,
         val_cer_epochs    = to_epochs(val_cer_steps),
         val_cer_vals      = val_cer_vals,
+        train_ier_epochs  = to_epochs(tr_ier_s),
+        train_ier_vals    = tr_ier_v,
+        train_der_epochs  = to_epochs(tr_der_s),
+        train_der_vals    = tr_der_v,
+        train_ser_epochs  = to_epochs(tr_ser_s),
+        train_ser_vals    = tr_ser_v,
+        val_ier_epochs    = to_epochs(vl_ier_s),
+        val_ier_vals      = vl_ier_v,
+        val_der_epochs    = to_epochs(vl_der_s),
+        val_der_vals      = vl_der_v,
+        val_ser_epochs    = to_epochs(vl_ser_s),
+        val_ser_vals      = vl_ser_v,
         lr_epochs         = to_epochs(lr_s),
         lr_vals           = lr_v,
         best_val_cer       = best_val_cer,
         best_val_cer_epoch = best_val_cer_epoch,
         test_cer           = test_cer_v[-1]  if test_cer_v  else None,
         test_loss          = test_loss_v[-1] if test_loss_v else None,
+        test_ier           = test_ier_v[-1]  if test_ier_v  else None,
+        test_der           = test_der_v[-1]  if test_der_v  else None,
+        test_ser           = test_ser_v[-1]  if test_ser_v  else None,
     )
 
 

@@ -12,18 +12,29 @@ cross-experiment comparison report is written to results/.
 
 Output layout
 -------------
-  logs/
-    YYYY-MM-DD/HH-MM-SS/
-      training_curves.png        ← 2×4 dashboard (loss, CER, accuracy, LR)
-      experiment_summary.json    ← metrics + hyperparameters for this run
-      checkpoints/               ← best and last checkpoints
-      lightning_logs/            ← raw TensorBoard event files
+  logs/YYYY-MM-DD/HH-MM-SS/        ← one directory per experiment run
+    training_curves.png             ← 2×7 dashboard (loss, CER, acc, IER, DER, SER, LR)
+    curves/                         ← individual PNGs per metric (linear + log)
+      loss.png  cer.png  ier.png  der.png  ser.png  lr.png
+    experiment_summary.json         ← metrics + hyperparameters for this run
+    checkpoints/                    ← best and last checkpoints
+    lightning_logs/                 ← raw TensorBoard event files
 
-  results/
-    val_cer_comparison.png       ← all experiments' val CER on one plot
-    test_cer_bar_chart.png       ← ranked bar chart, winner highlighted
-    experiments.csv              ← full comparison table
-    best_model.txt               ← winner announcement + full ranking
+  results/YYYY-MM-DD/HH-MM-SS/     ← one directory per suite run (never overwritten)
+    val_cer_comparison.png          ← all experiments' val CER on one plot
+    train_loss_comparison.png       ← all experiments' train loss on one plot
+    val_ier_comparison.png          ← all experiments' val IER on one plot
+    val_der_comparison.png          ← all experiments' val DER on one plot
+    val_ser_comparison.png          ← all experiments' val SER on one plot
+    lr_comparison.png               ← all experiments' LR schedule on one plot
+    test_cer_bar_chart.png          ← ranked bar chart of test CER
+    test_ier_bar_chart.png          ← ranked bar chart of test IER
+    test_der_bar_chart.png          ← ranked bar chart of test DER
+    test_ser_bar_chart.png          ← ranked bar chart of test SER
+    experiments.csv                 ← full comparison table
+    model_configs.json              ← full config snapshot for every experiment
+    model_configs.txt               ← human-readable version of model_configs.json
+    best_model.txt                  ← winner announcement + full ranking
 
 Re-generating only the report (without re-training):
 
