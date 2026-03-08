@@ -1,0 +1,94 @@
+# @package transforms
+#
+# log_spectrogram_calibrated — Physically-motivated augmentation pipeline
+#
+# Design rationale: see Markdowns/augmentation_calibrated_design.md
+#
+# Core principles:
+#   1. Preserve spatial discriminability (no channel zeroing)
+#   2. Match evaluation data distribution (no synthetic burst/warp noise)
+#   3. Focus on real physical sources of intra-class variability
+#      (electrode contact quality, signal drift, placement variation)
+
+train:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+
+  # Conservative amplitude scaling (narrower range than log_spectrogram_plus's 0.8–1.25)
+  # Simulates session-to-session RMS variation in electrode contact quality.
+  - _target_: emg2qwerty.transforms.RandomGain
+    min_gain: 0.9
+    max_gain: 1.1
+    per_channel: true
+    per_band: true
+
+  # NEW: Slow temporal amplitude drift (fatigue, sweat, impedance drift)
+  # Applied before any channel-level transforms so it modulates the whole signal.
+  - _target_: emg2qwerty.transforms.AmplitudeEnvelope
+    p: 0.5
+    max_modulation: 0.3
+    n_control_points: 4
+
+  # NEW: Soft electrode contact degradation (replaces ChannelDropout)
+  # Attenuates rather than zeros channels — spatial patterns remain readable.
+  - _target_: emg2qwerty.transforms.SoftChannelAttenuation
+    p: 0.1
+    min_factor: 0.3
+    max_factor: 0.8
+    channel_dim: -1
+
+  # Very conservative broadband noise — lower sigma than log_spectrogram_plus (0.02)
+  # Represents typical amplifier/quantization noise floor, not extreme artifacts.
+  - _target_: emg2qwerty.transforms.AdditiveGaussianNoise
+    min_sigma: 0.0
+    max_sigma: 0.01
+    per_channel: false
+
+  # Global channel rotation within each band (unchanged from baseline)
+  - _target_: emg2qwerty.transforms.ForEach
+    dim: 1
+    transform:
+      _target_: emg2qwerty.transforms.RandomBandRotation
+      offsets: [-1, 0, 1]
+      channel_dim: -1
+
+  # Left/right band temporal alignment jitter (unchanged from baseline)
+  - _target_: emg2qwerty.transforms.TemporalAlignmentJitter
+    max_offset: 120
+    stack_dim: 1
+
+  # NEW: Adjacent electrode pair swaps (inter-session placement variation)
+  # Applied after band-level transforms but before spectrogram so it
+  # operates on raw signal channels.
+  - _target_: emg2qwerty.transforms.ElectrodePermutation
+    p: 0.3
+    max_swaps: 3
+    channel_dim: -1
+
+  # Feature extraction (unchanged)
+  - _target_: emg2qwerty.transforms.LogSpectrogram
+    n_fft: 64
+    hop_length: 16
+
+  # Spectrogram-domain masking (unchanged from baseline)
+  - _target_: emg2qwerty.transforms.SpecAugment
+    n_time_masks: 3
+    time_mask_param: 25
+    n_freq_masks: 2
+    freq_mask_param: 4
+
+val:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+
+  - _target_: emg2qwerty.transforms.LogSpectrogram
+    n_fft: 64
+    hop_length: 16
+
+test:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+
+  - _target_: emg2qwerty.transforms.LogSpectrogram
+    n_fft: 64
+    hop_length: 16

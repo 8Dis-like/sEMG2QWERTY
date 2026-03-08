@@ -508,3 +508,165 @@ class RandomFrequencyEQ:
         curve = curve.reshape(shape)
 
         return x + curve
+
+
+# -------------------------
+# Calibrated augmentations — physically-motivated, information-preserving
+# -------------------------
+
+@dataclass
+class SoftChannelAttenuation:
+    """Attenuate random channels by a factor instead of zeroing them.
+
+    Unlike ChannelDropout (which zeros channels entirely), this preserves
+    the relative spatial pattern within each channel — only amplitude is
+    reduced. Simulates real electrode contact degradation such as impedance
+    increase from sweat or poor contact pressure.
+
+    Args:
+        p: per-channel probability of applying attenuation.
+        min_factor: minimum amplitude scale applied to an attenuated channel.
+        max_factor: maximum amplitude scale applied to an attenuated channel.
+        channel_dim: channel dimension index (default: -1).
+    """
+    p: float = 0.1
+    min_factor: float = 0.3
+    max_factor: float = 0.8
+    channel_dim: int = -1
+
+    def __post_init__(self) -> None:
+        assert 0 <= self.p <= 1
+        assert 0 < self.min_factor <= self.max_factor <= 1.0
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self.p == 0:
+            return tensor
+
+        x = tensor.clone()
+        C = x.shape[self.channel_dim]
+        device = x.device
+        dtype = x.dtype
+
+        # Bernoulli mask: which channels to attenuate
+        attenuate = torch.rand((C,), device=device) < self.p
+        if not attenuate.any():
+            return x
+
+        # Sample a random scale factor for each attenuated channel
+        factors = torch.ones((C,), device=device, dtype=dtype)
+        n_att = int(attenuate.sum().item())
+        factors[attenuate] = torch.empty((n_att,), device=device, dtype=dtype).uniform_(
+            float(self.min_factor), float(self.max_factor)
+        )
+
+        # Reshape for broadcasting across all dims except channel_dim
+        shape = [1] * x.ndim
+        shape[self.channel_dim] = C
+        x = x * factors.reshape(shape)
+        return x
+
+
+@dataclass
+class AmplitudeEnvelope:
+    """Apply a smooth, slowly-varying amplitude modulation over time.
+
+    Models temporal amplitude drift caused by muscle fatigue, perspiration,
+    or electrode impedance changes during a recording session. The envelope
+    is multiplicative and smooth, so it never destroys relative channel
+    information — it only modulates the overall signal level over time.
+
+    Args:
+        p: probability to apply.
+        max_modulation: maximum deviation of the envelope from 1.0 (e.g.,
+            0.3 means the envelope varies between 0.7 and 1.3).
+        n_control_points: number of control points interpolated to generate
+            the smooth envelope curve.
+        time_dim: time dimension index (default: 0).
+    """
+    p: float = 0.5
+    max_modulation: float = 0.3
+    n_control_points: int = 4
+    time_dim: int = 0
+
+    def __post_init__(self) -> None:
+        assert 0 <= self.p <= 1
+        assert 0 <= self.max_modulation < 1.0
+        assert self.n_control_points >= 2
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        if np.random.rand() > self.p:
+            return tensor
+
+        x = tensor
+        T = x.shape[self.time_dim]
+        if T <= 1:
+            return x
+
+        device = x.device
+        dtype = x.dtype
+
+        # Sample control points in [1 - max_mod, 1 + max_mod]
+        cp = torch.empty((self.n_control_points,), device=device, dtype=dtype).uniform_(
+            1.0 - float(self.max_modulation), 1.0 + float(self.max_modulation)
+        )
+
+        # Interpolate to length T
+        envelope = torch.nn.functional.interpolate(
+            cp[None, None, :],  # (1, 1, P)
+            size=T,
+            mode="linear",
+            align_corners=True,
+        ).reshape(T)  # (T,)
+
+        # Reshape for broadcasting: (T, 1, 1, ...) matching tensor dims
+        shape = [1] * x.ndim
+        shape[self.time_dim] = T
+        return x * envelope.reshape(shape)
+
+
+@dataclass
+class ElectrodePermutation:
+    """Swap a random subset of adjacent electrode channel pairs.
+
+    Models inter-session electrode placement variation. While RandomBandRotation
+    shifts all channels globally by ±1, this transform swaps a small number of
+    specific adjacent pairs — a more realistic model of slight electrode
+    repositioning between sessions. Fully information-preserving: no signal
+    is discarded, only reordered.
+
+    Args:
+        p: probability to apply.
+        max_swaps: maximum number of adjacent channel pairs to swap.
+        channel_dim: channel dimension index (default: -1).
+    """
+    p: float = 0.3
+    max_swaps: int = 3
+    channel_dim: int = -1
+
+    def __post_init__(self) -> None:
+        assert 0 <= self.p <= 1
+        assert self.max_swaps >= 1
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        if np.random.rand() > self.p:
+            return tensor
+
+        x = tensor.clone()
+        C = x.shape[self.channel_dim]
+        if C < 2:
+            return x
+
+        n_swaps = int(np.random.randint(1, self.max_swaps + 1))
+        # Pick random adjacent pairs (i, i+1); allow repeated picks
+        for _ in range(n_swaps):
+            i = int(np.random.randint(0, C - 1))
+            # Build slicers for channels i and i+1
+            slc_i   = [slice(None)] * x.ndim
+            slc_ip1 = [slice(None)] * x.ndim
+            slc_i[self.channel_dim]   = slice(i,     i + 1)
+            slc_ip1[self.channel_dim] = slice(i + 1, i + 2)
+            tmp = x[tuple(slc_i)].clone()
+            x[tuple(slc_i)]   = x[tuple(slc_ip1)]
+            x[tuple(slc_ip1)] = tmp
+
+        return x
