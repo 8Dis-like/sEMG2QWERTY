@@ -1,0 +1,13 @@
+# @package _global_
+module:
+  _target_: emg2qwerty.pure_rnn.PureRNNCTCModule
+  in_features: 528       # = 16 electrodes × 33 freq bins (n_fft//2+1)
+  mlp_features: [384]    # MLP hidden/output size; num_features = 2 × 384 = 768
+  rnn_hidden_size: 384   # GRU hidden units per direction; output = 768 = num_features
+  rnn_num_layers: 4      # Deeper stack (no CNN; 4 layers ≈ comparable capacity)
+  rnn_dropout: 0.2       # Inter-layer dropout probability
+
+datamodule:
+  _target_: emg2qwerty.lightning.WindowedEMGDataModule
+  window_length: 8000    # 4-second windows at 2 kHz
+  padding: [1800, 200]   # 900 ms past context + 100 ms future context

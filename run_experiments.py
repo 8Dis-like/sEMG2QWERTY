@@ -78,9 +78,10 @@ GLOBAL: dict = dict(
 #
 # Required keys : name, model, transforms
 # Optional keys : rnn_num_layers, rnn_hidden_size, rnn_bidirectional,
-#                 lr_scheduler, max_epochs, batch_size, seed
+#                 rnn_dropout, lr_scheduler, max_epochs, batch_size, seed
 #
-# model choices       : cnn_rnn_ctc (GRU), cnn_lstm_ctc (LSTM), tds_conv_ctc
+# model choices       : cnn_rnn_ctc (GRU), cnn_lstm_ctc (LSTM), tds_conv_ctc,
+#                       pure_rnn_ctc (deep BiGRU, no CNN)
 # transforms choices  : log_spectrogram, log_spectrogram_plus
 # lr_scheduler choices: linear_warmup_cosine_annealing, cosine_annealing,
 #                       cosine_annealing_warm_restarts, reduce_on_plateau, step
@@ -117,6 +118,22 @@ EXPERIMENTS: list[dict] = [
         rnn_num_layers    = 2,
         rnn_hidden_size   = 384,
         rnn_bidirectional = True,
+    ),
+    dict(
+        name              = "Pure-RNN (deep BiGRU) | log_spectrogram",
+        model             = "pure_rnn_ctc",
+        transforms        = "log_spectrogram",
+        rnn_num_layers    = 4,
+        rnn_hidden_size   = 384,
+        rnn_dropout       = 0.2,
+    ),
+    dict(
+        name              = "Pure-RNN (deep BiGRU) | log_spectrogram_plus",
+        model             = "pure_rnn_ctc",
+        transforms        = "log_spectrogram_plus",
+        rnn_num_layers    = 4,
+        rnn_hidden_size   = 384,
+        rnn_dropout       = 0.2,
     ),
 ]
 

@@ -103,8 +103,8 @@ def _build_command(config: dict) -> list[str]:
         f"batch_size={config['batch_size']}",
     ]
 
-    # RNN-specific overrides — only meaningful for hybrid (GRU / LSTM) models
-    for key in ("rnn_num_layers", "rnn_hidden_size", "rnn_bidirectional"):
+    # RNN-specific overrides — meaningful for hybrid (GRU / LSTM) and pure RNN models
+    for key in ("rnn_num_layers", "rnn_hidden_size", "rnn_bidirectional", "rnn_dropout"):
         if key in config:
             cmd.append(f"module.{key}={config[key]}")
 
