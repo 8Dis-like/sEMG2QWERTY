@@ -88,22 +88,22 @@ GLOBAL: dict = dict(
 #                       cosine_annealing_warm_restarts, reduce_on_plateau, step
 
 EXPERIMENTS: list[dict] = [
-    # dict(
-    #     name              = "CNN/RNN-GRU | log_spectrogram",
-    #     model             = "cnn_rnn_ctc",
-    #     transforms        = "log_spectrogram",
-    #     rnn_num_layers    = 2,
-    #     rnn_hidden_size   = 384,
-    #     rnn_bidirectional = True,
-    # ),
-    # dict(
-    #     name              = "CNN/RNN-GRU | log_spectrogram_plus",
-    #     model             = "cnn_rnn_ctc",
-    #     transforms        = "log_spectrogram_plus",
-    #     rnn_num_layers    = 2,
-    #     rnn_hidden_size   = 384,
-    #     rnn_bidirectional = True,
-    # ),
+    dict(
+        name              = "CNN/RNN-GRU | log_spectrogram",
+        model             = "cnn_rnn_ctc",
+        transforms        = "log_spectrogram",
+        rnn_num_layers    = 2,
+        rnn_hidden_size   = 384,
+        rnn_bidirectional = True,
+    ),
+    dict(
+        name              = "CNN/RNN-GRU | log_spectrogram_plus",
+        model             = "cnn_rnn_ctc",
+        transforms        = "log_spectrogram_plus",
+        rnn_num_layers    = 2,
+        rnn_hidden_size   = 384,
+        rnn_bidirectional = True,
+    ),
     dict(
         name              = "CNN/RNN-GRU | log_spectrogram_calibrated",
         model             = "cnn_rnn_ctc",
@@ -112,22 +112,22 @@ EXPERIMENTS: list[dict] = [
         rnn_hidden_size   = 384,
         rnn_bidirectional = True,
     ),
-    # dict(
-    #     name              = "CNN/RNN-LSTM | log_spectrogram",
-    #     model             = "cnn_lstm_ctc",
-    #     transforms        = "log_spectrogram",
-    #     rnn_num_layers    = 2,
-    #     rnn_hidden_size   = 384,
-    #     rnn_bidirectional = True,
-    # ),
-    # dict(
-    #     name              = "CNN/RNN-LSTM | log_spectrogram_plus",
-    #     model             = "cnn_lstm_ctc",
-    #     transforms        = "log_spectrogram_plus",
-    #     rnn_num_layers    = 2,
-    #     rnn_hidden_size   = 384,
-    #     rnn_bidirectional = True,
-    # ),
+    dict(
+        name              = "CNN/RNN-LSTM | log_spectrogram",
+        model             = "cnn_lstm_ctc",
+        transforms        = "log_spectrogram",
+        rnn_num_layers    = 2,
+        rnn_hidden_size   = 384,
+        rnn_bidirectional = True,
+    ),
+    dict(
+        name              = "CNN/RNN-LSTM | log_spectrogram_plus",
+        model             = "cnn_lstm_ctc",
+        transforms        = "log_spectrogram_plus",
+        rnn_num_layers    = 2,
+        rnn_hidden_size   = 384,
+        rnn_bidirectional = True,
+    ),
     dict(
         name              = "CNN/RNN-LSTM | log_spectrogram_calibrated",
         model             = "cnn_lstm_ctc",

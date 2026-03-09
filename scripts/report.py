@@ -323,7 +323,7 @@ def _save_model_configs(summaries: list[dict], results_dir: Path) -> None:
         lines += [sep, ""]
 
     txt_path = results_dir / "model_configs.txt"
-    with open(txt_path, "w") as f:
+    with open(txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"  Configs -> {txt_path}")
 

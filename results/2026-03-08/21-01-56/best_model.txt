@@ -1,0 +1,26 @@
+==============================================================
+  BEST MODEL
+==============================================================
+  Name            : Pure-RNN (deep BiGRU) | log_spectrogram_calibrated
+  Model type      : pure_rnn_ctc
+  Test CER        : 13.140263557434082
+  Best val CER    : 15.994683265686035 @ epoch 130
+
+  Full ranking (by test CER, or best val CER if test unavailable):
+  1.  Pure-RNN (deep BiGRU) | log_spectrogram_calibrated  CER = 13.14%  <-- BEST
+  2.  CNN/RNN-LSTM | log_spectrogram              CER = 13.33%
+  3.  CNN/RNN-LSTM | log_spectrogram_calibrated   CER = 13.53%
+  4.  Pure-RNN (deep BiGRU) | log_spectrogram     CER = 14.20%
+  5.  CNN/RNN-LSTM | log_spectrogram_plus         CER = 14.37%
+  6.  CNN/RNN-GRU | log_spectrogram_calibrated    CER = 14.57%
+  7.  CNN/RNN-GRU | log_spectrogram               CER = 15.78%
+  8.  CNN/RNN-GRU | log_spectrogram_plus          CER = 17.33%
+  9.  Pure-RNN (deep BiGRU) | log_spectrogram_plus  CER = 19.00%
+
+  Winning hyperparameters:
+    transforms: log_spectrogram_calibrated
+    batch_size: 32
+    lr_scheduler: linear_warmup_cosine_annealing
+    rnn_num_layers: 4
+    rnn_hidden_size: 384
+==============================================================

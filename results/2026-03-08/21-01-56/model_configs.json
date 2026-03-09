@@ -1,0 +1,155 @@
+[
+  {
+    "name": "CNN/RNN-GRU | log_spectrogram",
+    "run_id": "2026-03-08/03-15-16",
+    "timestamp": "2026-03-08T05:08:44.146550",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "cnn_rnn_ctc",
+      "transforms": "log_spectrogram",
+      "rnn_num_layers": 2,
+      "rnn_hidden_size": 384,
+      "rnn_bidirectional": true
+    }
+  },
+  {
+    "name": "CNN/RNN-GRU | log_spectrogram_plus",
+    "run_id": "2026-03-08/05-08-47",
+    "timestamp": "2026-03-08T07:01:19.580511",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "cnn_rnn_ctc",
+      "transforms": "log_spectrogram_plus",
+      "rnn_num_layers": 2,
+      "rnn_hidden_size": 384,
+      "rnn_bidirectional": true
+    }
+  },
+  {
+    "name": "CNN/RNN-GRU | log_spectrogram_calibrated",
+    "run_id": "2026-03-08/07-01-22",
+    "timestamp": "2026-03-08T08:54:00.880278",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "cnn_rnn_ctc",
+      "transforms": "log_spectrogram_calibrated",
+      "rnn_num_layers": 2,
+      "rnn_hidden_size": 384,
+      "rnn_bidirectional": true
+    }
+  },
+  {
+    "name": "CNN/RNN-LSTM | log_spectrogram",
+    "run_id": "2026-03-08/08-54-04",
+    "timestamp": "2026-03-08T10:49:46.609302",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "cnn_lstm_ctc",
+      "transforms": "log_spectrogram",
+      "rnn_num_layers": 2,
+      "rnn_hidden_size": 384,
+      "rnn_bidirectional": true
+    }
+  },
+  {
+    "name": "CNN/RNN-LSTM | log_spectrogram_plus",
+    "run_id": "2026-03-08/10-49-49",
+    "timestamp": "2026-03-08T12:45:53.035058",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "cnn_lstm_ctc",
+      "transforms": "log_spectrogram_plus",
+      "rnn_num_layers": 2,
+      "rnn_hidden_size": 384,
+      "rnn_bidirectional": true
+    }
+  },
+  {
+    "name": "CNN/RNN-LSTM | log_spectrogram_calibrated",
+    "run_id": "2026-03-08/12-45-56",
+    "timestamp": "2026-03-08T14:43:34.860574",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "cnn_lstm_ctc",
+      "transforms": "log_spectrogram_calibrated",
+      "rnn_num_layers": 2,
+      "rnn_hidden_size": 384,
+      "rnn_bidirectional": true
+    }
+  },
+  {
+    "name": "Pure-RNN (deep BiGRU) | log_spectrogram",
+    "run_id": "2026-03-08/14-43-38",
+    "timestamp": "2026-03-08T16:43:31.101827",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "pure_rnn_ctc",
+      "transforms": "log_spectrogram",
+      "rnn_num_layers": 4,
+      "rnn_hidden_size": 384,
+      "rnn_dropout": 0.2
+    }
+  },
+  {
+    "name": "Pure-RNN (deep BiGRU) | log_spectrogram_plus",
+    "run_id": "2026-03-08/16-43-34",
+    "timestamp": "2026-03-08T18:49:13.276852",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "pure_rnn_ctc",
+      "transforms": "log_spectrogram_plus",
+      "rnn_num_layers": 4,
+      "rnn_hidden_size": 384,
+      "rnn_dropout": 0.2
+    }
+  },
+  {
+    "name": "Pure-RNN (deep BiGRU) | log_spectrogram_calibrated",
+    "run_id": "2026-03-08/18-49-16",
+    "timestamp": "2026-03-08T20:59:04.684216",
+    "full_config": {
+      "user": "single_user",
+      "batch_size": 32,
+      "accelerator": "gpu",
+      "devices": 1,
+      "lr_scheduler": "linear_warmup_cosine_annealing",
+      "model": "pure_rnn_ctc",
+      "transforms": "log_spectrogram_calibrated",
+      "rnn_num_layers": 4,
+      "rnn_hidden_size": 384,
+      "rnn_dropout": 0.2
+    }
+  }
+]
