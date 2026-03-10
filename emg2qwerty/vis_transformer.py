@@ -1,138 +1,94 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Sequence
+from emg2qwerty.modules import SpectrogramNorm, MultiBandRotationInvariantMLP
+import math
 
 
-class ConvVit(nn.Module):
+# SpectrogramNorm → MultiBandRotationInvariantMLP → Flatten
+
+
+class EMGFeatureExtractor(nn.Module):
     """
-    Per-frame feature extractor. Processes each EMG spectrogram frame
-    independently via a Conv stem + ViT, outputting a feature vector
-    per frame. Temporal modeling is handled externally by TDSConvEncoder
-    in the Lightning module, mirroring the original TDSConvCTCModule design.
+    Replicates the pre-temporal-encoder pipeline from TDSConvCTCModule.
+    Input:  (T, N, 2, 16, freq)
+    Output: (T, N, num_features)  where num_features = 2 * mlp_features[-1]
     """
+    NUM_BANDS: int = 2
+    ELECTRODE_CHANNELS: int = 16
 
-    def __init__(
-        self,
-        in_channels=2,
-        n_filters1=32,
-        n_filters2=128,
-        kernel_size=3,
-        n_head=8,
-        n_layers=2,
-    ):
+    def __init__(self, in_features: int  = 528, mlp_features: list = [384]):
         super().__init__()
 
-        self.n_filters2 = n_filters2
-
-        # -------------------------
-        # Convolutional stem
-        # -------------------------
-        self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, n_filters1, kernel_size, stride=2, padding=1),
-            nn.BatchNorm2d(n_filters1),
-            nn.GELU(),
-            nn.Conv2d(n_filters1, n_filters2, kernel_size, stride=2, padding=1),
-            nn.BatchNorm2d(n_filters2),
-            nn.GELU(),
+        # BatchNorm2d on the input (T, N, B, E, F) -> signals are scaled between 0 and 1
+        self.norm = SpectrogramNorm(channels= self.NUM_BANDS * self.ELECTRODE_CHANNELS)
+        # apply some shifts to the electrodes, run through an MLP and average results. 
+        # Done for robustness
+        self.mlp = MultiBandRotationInvariantMLP(
+            in_features= in_features,
+            mlp_features= mlp_features,
+            num_bands= self.NUM_BANDS
         )
+        self.num_features = self.NUM_BANDS * mlp_features[-1]
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (T, N, 2, 16, freq)
+        x = self.norm(x)   # (T, N, 2, 16, freq)
+        x = self.mlp(x)    # (T, N, 2, mlp_features[-1])
+        x = x.flatten(start_dim=2)  # (T, N, num_features)
+        return x
 
-        # pos_embed is created lazily on the first forward pass once we know
-        # the actual H*W coming out of the stem.
-        self.num_tokens = None
-        self.pos_embed = None
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float, max_len: int = 200000):
+        super().__init__()
+        self.dropout = nn.Dropout(0.0)
+        pe = torch.zeros(max_len, 1, d_model)
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.pe[ : x.size(0)]
+        return self.dropout(x)
+
+
+
+class TemporalTransformerEncoder(nn.Module):
+    """
+    Temporal transformer operating across T frames.
+    Input:  (T, N, d_model)
+    Output: (T, N, d_model)
+    """
+    def __init__(self, d_model: int = 768, nhead: int = 8, num_layers: int = 4, dim_feedforward: int = 2048, dropout: int = 0.1, max_len: int = 200000):
+        super().__init__()
+
+        self.pos_encoding = PositionalEncoding(d_model, dropout, max_len)
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=n_filters2,
-            nhead=n_head,
-            dim_feedforward=512,
-            batch_first=True,
-            activation="gelu",
-            norm_first=True,
-            dropout=0.1,
+            d_model= d_model,
+            nhead= nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation='gelu',
+            batch_first=False,
+            norm_first=False
         )
 
         self.transformer = nn.TransformerEncoder(
-            encoder_layer,
-            num_layers=n_layers
+            encoder_layer=encoder_layer,
+            num_layers=num_layers,
+            enable_nested_tensor=False
         )
 
-        self.norm = nn.LayerNorm(n_filters2)
-        self.dropout = nn.Dropout(0.1)
 
-        # No classifier here — classification happens after TDSConvEncoder
-        # in the full pipeline (ConvVitCTCModule)
-
-        self._init_weights()
-
-    # ------------------------------------------------
-
-    def _init_weights(self):
-
-        for m in self.modules():
-
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(
-                    m.weight, mode="fan_in", nonlinearity="linear"
-                )
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.ones_(m.weight)
-                nn.init.zeros_(m.bias)
-
-            elif isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                nn.init.zeros_(m.bias)
-
-        # Scale down transformer weights to prevent early softmax saturation
-        for name, p in self.transformer.named_parameters():
-            if 'weight' in name and p.dim() > 1:
-                nn.init.xavier_normal_(p, gain=0.1)
-
-    # ------------------------------------------------
-
-    def _init_pos_embed(self, H, W):
-        self.num_tokens = H * W
-        self.pos_embed = nn.Parameter(
-            torch.randn(1, self.num_tokens, self.n_filters2,
-                        device=next(self.parameters()).device) * 0.02
-        )
-
-    # ------------------------------------------------
-
-    def forward(self, x):
-        # x: [B, C, H, W]  — one frame per sample
-
-        x = self.stem(x)
-
-        B, C, H, W = x.shape
-
-        if self.pos_embed is None:
-            self._init_pos_embed(H, W)
-
-        if H * W != self.num_tokens:
-            raise RuntimeError(
-                f"Spatial size changed: got {H}x{W} ({H*W} tokens), "
-                f"but pos_embed was built for {self.num_tokens} tokens."
-            )
-
-        # flatten spatial → tokens: [B, HW, C]
-        tokens = x.flatten(2).transpose(1, 2)
-
-        # token dropout (out-of-place to protect autograd graph)
-        if self.training:
-            mask = (
-                torch.rand(B, tokens.size(1), 1, device=x.device) > 0.05
-            ).float()
-            tokens = tokens * mask
-
-        tokens = tokens + self.pos_embed
-
-        vit_out = self.transformer(tokens)
-        vit_out = self.norm(vit_out)
-        vit_out = self.dropout(vit_out)
-
-        # Pool spatial tokens → single feature vector per frame: [B, n_filters2]
-        return vit_out.mean(dim=1)
+    def forward(self, x: torch.Tensor, src_key_padding_mask=None) -> torch.Tensor:
+        x = self.pos_encoding(x)
+        T = x.size(0)
+        # Local attention window of 32 frames (like TDS kernel_width=32)
+        causal_mask = nn.Transformer.generate_square_subsequent_mask(T, device=x.device)
+        # Zero out attention beyond 32 frames back
+        for i in range(T):
+            causal_mask[i, :max(0, i-32)] = float('-inf')
+        out = self.transformer(x, mask=causal_mask, is_causal=False)
+        return out

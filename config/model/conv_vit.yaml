@@ -1,9 +1,16 @@
-# @package module
-_target_: emg2qwerty.lightning.ConvVitCTCModule
-n_filters1: 32
-n_filters2: 128
-n_head: 8
-n_layers: 2
-optimizer: ${optimizer}
-lr_scheduler: ${lr_scheduler}
-decoder: "greedy"
+# @package _global_
+
+module:
+  _target_: emg2qwerty.lightning.TransformerCTCModule
+  in_features: 528
+  mlp_features: [384]
+  num_layers: 4
+  nhead: 8
+  dim_feedforward: 2048
+  dropout: 0.1
+  decoder: greedy
+  debug: True
+
+datamodule:
+  window_length: 8000
+  padding: [1800, 200]

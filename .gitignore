@@ -57,3 +57,6 @@ wikitext-103-raw*
 
 # jupyter notbooks
 notebooks/
+
+test.py
+plot_data/

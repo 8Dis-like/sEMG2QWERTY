@@ -29,8 +29,11 @@ from emg2qwerty.modules import (
 )
 from emg2qwerty.transforms import Transform
 from emg2qwerty.decoder import CTCGreedyDecoder
-from emg2qwerty.vis_transformer import ConvVit
 import torch.nn.functional as F
+import math
+import os
+from emg2qwerty.vis_transformer import EMGFeatureExtractor, TemporalTransformerEncoder
+from emg2qwerty.comformer import EMGConformerCTC
 
 
 class WindowedEMGDataModule(pl.LightningDataModule):
@@ -276,215 +279,168 @@ class TDSConvCTCModule(pl.LightningModule):
             lr_scheduler_config=self.hparams.lr_scheduler,
         )
 
-class ConvVitCTCModule(pl.LightningModule):
-
+class TransformerCTCModule(pl.LightningModule):
     def __init__(
-        self,
-        n_filters1: int,
-        n_filters2: int = 128,
-        n_head: int = 8,
-        n_layers: int = 2,
-        optimizer: DictConfig = None,
-        lr_scheduler: DictConfig = None,
-        decoder: Any = None,
-        **kwargs
+            self, 
+            in_features: int = 528,
+            mlp_features: int = [384],
+            nhead: int = 4,
+            num_layers: int = 2,
+            dim_feedforward: int = 515,
+            dropout: float = 0.1,
+            optimizer: DictConfig = None,
+            lr_scheduler: DictConfig = None,
+            decoder: Any = None,
+            tds_checkpoint: str = None,
+            **kwargs,
     ):
         super().__init__()
-
         self.save_hyperparameters()
-
         self.debug = kwargs.get("debug", False)
 
-        self.charset = charset()
+        self.feature_extractor = EMGFeatureExtractor(in_features= in_features, mlp_features= mlp_features)
+        d_model = self.feature_extractor.num_features
 
-        # Per-frame feature extractor (ConvVit without classifier)
-        self.model = ConvVit(
-            n_filters1=n_filters1,
-            n_filters2=n_filters2,
-            n_head=n_head,
-            n_layers=n_layers,
+        self.transformer = TemporalTransformerEncoder(
+            d_model= d_model,
+            nhead= nhead,
+            num_layers= num_layers,
+            dim_feedforward= dim_feedforward,
+            dropout= dropout,
         )
 
-        self.temporal_downsample = nn.Conv1d(
-            in_channels=n_filters2,
-            out_channels=n_filters2,
-            kernel_size=3,
-            stride=2,
-            padding=1,
-        )
+        self.classifier = nn.Linear(d_model, charset().num_classes)
+        nn.init.normal_(self.classifier.weight, mean=0, std=0.001)
+        nn.init.constant_(self.classifier.bias, -math.log(charset().num_classes))
+        self.ctc_loss = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
 
-        # Temporal encoder — mirrors TDSConvCTCModule design.
-        # Provides temporal context across frames after per-frame feature extraction.
-        self.temporal_encoder = TDSConvEncoder(
-            num_features=n_filters2,
-            block_channels=(n_filters2 // 4,) * 4,
-            kernel_width=32,
-        )
+        # Hardcode for now to avoid Hydra parsing issues
+        # TDS_CKPT = "/home/danielluzzatto2/sEMG2QWERTY/logs/2026-03-08/05-46-34/checkpoints/epoch=9-step=4800.ckpt"
 
-        # Final classifier
-        self.classifier = nn.Linear(n_filters2, self.charset.num_classes)
-        nn.init.zeros_(self.classifier.weight)
-        nn.init.zeros_(self.classifier.bias)
-        # NO blank bias boost — it causes collapse
-
-        # Scale down TDSConv weights to match scaled ConvVit features
-        for m in self.temporal_encoder.modules():
-            if isinstance(m, (nn.Conv2d, nn.Linear)):
-                nn.init.xavier_normal_(m.weight, gain=0.1)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-
-        self.ctc_loss = nn.CTCLoss(
-            blank=self.charset.null_class,
-            zero_infinity=True
-        )
-
-        # decoder
-        if isinstance(decoder, (dict, DictConfig)):
-            self.decoder = hydra.utils.instantiate(decoder)
-        elif decoder == "greedy":
+        # if tds_checkpoint is not None:
+        #     self._load_tds_feature_extractor(tds_checkpoint)
+        # elif os.path.exists(TDS_CKPT):
+        #     self._load_tds_feature_extractor(TDS_CKPT)
+        
+        
+        if decoder == "greedy":
             self.decoder = CTCGreedyDecoder()
+        elif isinstance(decoder, (dict, DictConfig)):
+            self.decoder = hydra.utils.instantiate(decoder)
         else:
             self.decoder = decoder
 
-        # metrics
         metrics = MetricCollection([CharacterErrorRates()])
         self.metrics = nn.ModuleDict({
             f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
             for phase in ["train", "val", "test"]
         })
 
-    # ------------------------------------------------
+    def _load_tds_feature_extractor(self, checkpoint_path: str):
+        print(f"Loading TDS feature extractor from {checkpoint_path}")
+        ckpt = torch.load(checkpoint_path, map_location='cpu')
+        state = ckpt['state_dict']
 
-    def forward(self, x):
-        return self.model(x)
+        mapping = {}
+        for k, v in state.items():
+            if k.startswith('model.0.'):
+                mapping[k.replace('model.0.', 'norm.')] = v
+            elif k.startswith('model.1.'):
+                mapping[k.replace('model.1.', 'mlp.')] = v
 
-    # ------------------------------------------------
+        missing, unexpected = self.feature_extractor.load_state_dict(mapping, strict=False)
+        print(f"  Missing keys: {missing}")
+        print(f"  Unexpected keys: {unexpected}")
 
-    def training_step(self, batch, batch_idx):
-        loss = self._step("train", batch, batch_idx)
-        if batch_idx < 3 and self.debug:
-            total_norm = sum(
-                p.grad.norm().item() ** 2
-                for p in self.parameters() if p.grad is not None
-            ) ** 0.5
-            print(f"  grad norm after backward: {total_norm:.3f}")
-        return loss
+        # Freeze both feature extractor and classifier — only transformer trains initially
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+        for param in self.classifier.parameters():
+            param.requires_grad = False
+        print("  Feature extractor and classifier frozen.")
 
-    def validation_step(self, batch, batch_idx):
-        return self._step("val", batch, batch_idx)
+    def on_train_epoch_start(self):
+        opt = self.optimizers()
+        if opt is not None:
+            lr = opt.param_groups[0]['lr']
+            self.log('train/lr', lr, on_epoch=True, prog_bar=False)
+        # Unfreeze classifier at epoch 3 so it can adapt to transformer outputs
+        if self.current_epoch == 3:
+            for param in self.classifier.parameters():
+                param.requires_grad = True
+            print("  Classifier unfrozen.")
+        # Unfreeze feature extractor at epoch 6 for full fine-tuning
+        if self.current_epoch == 6:
+            for param in self.feature_extractor.parameters():
+                param.requires_grad = True
+            print("  Feature extractor unfrozen.")
+    
+    def forward(self, x,chunk_size = 2000):
+        x = self.feature_extractor(x)   # (T, N, 768)
 
-    def test_step(self, batch, batch_idx):
-        return self._step("test", batch, batch_idx)
-
-    # ------------------------------------------------
-
-    def configure_optimizers(self):
-        print(f"lr_scheduler config: {self.hparams.lr_scheduler}")
-        optimizer = hydra.utils.instantiate(
-            self.hparams.optimizer,
-            params=self.parameters()
-        )
-        if self.hparams.lr_scheduler:
-            scheduler = hydra.utils.instantiate(
-                self.hparams.lr_scheduler,
-                optimizer=optimizer
-            )
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "interval": "step",
-                    "frequency": 1,
-                }
-            }
-        return optimizer
-
-    # ------------------------------------------------
-
-    def _step(self, phase: str, batch, batch_idx: int = 0):
-
-        inputs = batch["inputs"]               # [T, N, C, H, W]
-        targets = batch["targets"]             # [S, N]
-        input_lengths = batch["input_lengths"] # [N] — actual unpadded lengths
+        if not self.training and x.size(0) > chunk_size:
+            chunks = x.split(chunk_size, dim=0)
+            x = torch.cat([self.transformer(chunk) for chunk in chunks], dim=0)
+        else:
+            x = self.transformer(x) # (T, N, 768)
+        x = self.classifier(x)           # (T, N, 99)
+        return F.log_softmax(x, dim=-1)
+    
+    def _step(self, phase, batch, batch_idx):
+        inputs = batch["inputs"]
+        targets = batch["targets"]
+        input_lengths = batch["input_lengths"]
         target_lengths = batch["target_lengths"]
 
-        T, N, C, H, W = inputs.shape
+        # Filter zero-length targets
+        valid = target_lengths > 0
+        if valid.sum() == 0:
+            return None
 
-        # 1. Per-frame feature extraction: [T*N, n_filters2]
-        frame_features = self.model(inputs.reshape(-1, C, H, W))
+        inputs = inputs[:, valid]
+        targets = targets[:, valid]
+        input_lengths = input_lengths[valid]
+        target_lengths = target_lengths[valid]
+        N = valid.sum().item()
 
-        # 2. Restore time dimension: [T, N, n_filters2]
-        frame_features = frame_features.view(T, N, -1)
+        emissions = self.forward(inputs)  # (T, N, 99)
+        
+        # blank_lp = emissions[:, :, charset().null_class].exp()  # (T, N)
+        # blank_penalty = blank_lp.mean()
 
-        # 2.5. Temporal downsampling: [T, N, F] → [T//2, N, F]
-        x = frame_features.permute(1, 2, 0)        # [N, F, T]
-        x = self.temporal_downsample(x)             # [N, F, T//2]
-        frame_features = x.permute(2, 0, 1)        # [T//2, N, F]
-        input_lengths_ds = (input_lengths - 1) // 2 + 1  # halve input lengths
+        T = emissions.size(0)
+        input_lengths_clamped = input_lengths.clamp(max=T).cpu().long()
+        target_lengths_cpu = target_lengths.cpu().long()
 
-        # 3. Temporal encoding: [T_out, N, n_filters2]
-        temporal_out = self.temporal_encoder(frame_features)
+        loss = self.ctc_loss(
+            emissions,
+            targets.transpose(0, 1),  # (N, S)
+            input_lengths_clamped,
+            target_lengths_cpu,
+        )
 
-        # 4. Classify: [T_out, N, n_classes]
-        emissions = F.log_softmax(
-            self.classifier(temporal_out), dim=-1
-        ).contiguous()
+        self.log(f"{phase}/loss", loss, batch_size=N, prog_bar=True, sync_dist=True)
 
-        # 5. Emission lengths: downsampled lengths minus TDS reduction
-        T_diff = frame_features.size(0) - temporal_out.size(0)
-        emission_lengths = (input_lengths_ds - T_diff).cpu().to(torch.long).clamp(min=0)
+        # if phase == "train" and batch_idx == 1:
+        #     # print(f"  emissions std at batch 1: {emissions.std().item():.6f}")
+        #     # print(f"  blank prob at batch 1: {emissions[:,:,self.charset.null_class].exp().mean().item():.4f}")
+        #     for name, param in self.named_parameters():
+        #         if param.grad is not None:
+        #             print(f"  grad {name}: {param.grad.norm().item():.6f}")
 
-        target_lengths_cpu = target_lengths.cpu().to(torch.long)
-        targets_cpu = targets.cpu()
-
-        # ---------------------
-
-        if target_lengths_cpu.sum() > 0:
-            loss = self.ctc_loss(
-                log_probs=emissions,
-                targets=targets.transpose(0, 1),
-                input_lengths=emission_lengths,
-                target_lengths=target_lengths_cpu,
-            )
-        else:
-            loss = torch.tensor(0.0, device=inputs.device, requires_grad=True)
-
-        self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True, prog_bar=True)
-
-        # ---------------------
-        # debug
-        # ---------------------
-
-        if self.debug and self.current_epoch < 3 and batch_idx % 200 == 0:
-            self._debug_step(phase, emissions, targets_cpu, target_lengths_cpu,
-                            temporal_out.size(0))
-            print(f"input_lengths sample: {input_lengths[:4].tolist()}")
-            print(f"T={T}, T_ds={frame_features.size(0)}, T_out={temporal_out.size(0)}, T_diff={T_diff}")
-            if batch_idx == 0 and phase == "train":
-                print(f"  frame_features : {list(frame_features.shape)}")
-                print(f"  temporal_out   : {list(temporal_out.shape)}")
-                print(f"  emissions      : {list(emissions.shape)}")
-                print(f"  emission_lengths sample: {emission_lengths[:4].tolist()}")
-                print(f"  loss           : {loss.item():.3f}")
-
-        # ---------------------
-        # metrics (val / test only)
-        # ---------------------
+        if self.debug and batch_idx % 250 == 0:
+            preds = emissions.argmax(dim=-1)
+            blank_ratio = (preds == charset().null_class).float().mean().item()
+            # current_lr = self.optimizers().param_groups[0]['lr']
+            # print(f"[{phase}] batch {batch_idx}: loss={loss.item():.3f}  blank={blank_ratio:.3f}  max_lp={emissions.max().item():.3f}, mean_lp={emissions.mean().item():.3f}, lr={current_lr:.5f}")
 
         if self.decoder and phase != "train" and target_lengths_cpu.sum() > 0:
-
             emissions_np = emissions.detach().cpu().numpy()
-            targets_np = targets_cpu.numpy()
+            targets_np = targets.cpu().numpy()
             metrics = self.metrics[f"{phase}_metrics"]
-            emission_lengths_list = emission_lengths.tolist()
-
             for i in range(N):
                 tgt_len = int(target_lengths_cpu[i])
-                if tgt_len == 0:
-                    continue
-
-                elen = emission_lengths_list[i]
+                elen = int(input_lengths_clamped[i])
                 self.decoder.reset()
                 pred = self.decoder.decode(
                     emissions=emissions_np[:elen, i, :],
@@ -494,36 +450,208 @@ class ConvVitCTCModule(pl.LightningModule):
                 metrics.update(prediction=pred, target=target_data)
 
         return loss
-    # ------------------------------------------------
 
-    def _debug_step(self, phase, emissions, targets_cpu, target_lengths_cpu, T_total):
-        preds = emissions.argmax(dim=-1)
-        blank_ratio = (preds == self.charset.null_class).float().mean().item()
-        sep = "-" * 40
+    def training_step(self, batch, batch_idx):
+        return self._step("train", batch, batch_idx)
 
-        if phase == "train":
-            print(f"\n{sep} DEBUG train | epoch {self.current_epoch} {sep}")
-            print(f"  emissions shape : {list(emissions.shape)}")
-            print(f"  blank ratio     : {blank_ratio:.3f}  (>0.95 = collapse)")
-            print(f"  target sample   : {targets_cpu[:10, 0].tolist()}")
-            print(f"  target length[0]: {int(target_lengths_cpu[0])}")
-            lp = emissions[:, 0, :].detach()
-            print(f"  emission[0] max logprob : {lp.max().item():.3f}")
-            print(f"  emission[0] min logprob : {lp.min().item():.3f}")
-            
+    def validation_step(self, batch, batch_idx):
+        return self._step("val", batch, batch_idx)
 
-        elif phase == "val":
-            print(f"\n{sep} DEBUG val   | epoch {self.current_epoch} {sep}")
-            print(f"  blank ratio     : {blank_ratio:.3f}")
-            print(f"  pred indices[:50]: {preds[:50, 0].tolist()}")
-            tgt_len = int(target_lengths_cpu[0])
-            print(f"  target[:tgt_len]: {targets_cpu[:tgt_len, 0].tolist()}")
-
-    # ------------------------------------------------
+    def test_step(self, batch, batch_idx):
+        return self._step("test", batch, batch_idx)
 
     def on_validation_epoch_end(self):
-        
         computed = self.metrics["val_metrics"].compute()
-        print(f"Epoch {self.current_epoch} val metrics: {computed}")
         self.log_dict(computed, sync_dist=True)
         self.metrics["val_metrics"].reset()
+
+    def configure_optimizers(self):
+        optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.parameters())
+        if self.hparams.lr_scheduler:
+            scheduler = hydra.utils.instantiate(
+                self.hparams.lr_scheduler.scheduler,
+                optimizer=optimizer
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": self.hparams.lr_scheduler.get("interval", "epoch"),
+                    "monitor": self.hparams.lr_scheduler.get("monitor", None),
+                }
+            }
+        return optimizer
+
+
+    def on_train_epoch_end(self):
+        computed = self.metrics["train_metrics"].compute()
+        self.log_dict(computed, sync_dist=True)
+        self.metrics["train_metrics"].reset()
+
+    def on_load_checkpoint(self, checkpoint):
+    # Replace pe buffer with correct size if it doesn't match
+        pe_key = 'transformer.pos_encoding.pe'
+        if pe_key in checkpoint['state_dict']:
+            if checkpoint['state_dict'][pe_key].shape[0] != 200000:
+                del checkpoint['state_dict'][pe_key]
+                # It will be filled by the model's own buffer after loading
+                # We need to add it back with the right shape
+                checkpoint['state_dict'][pe_key] = self.transformer.pos_encoding.pe
+    
+    def on_test_epoch_end(self):
+        computed = self.metrics["test_metrics"].compute()
+        self.log_dict(computed, sync_dist=True)
+        self.metrics["test_metrics"].reset()
+
+
+class ConformerCTCModule(pl.LightningModule):
+    def __init__(
+            self,
+            in_features: int = 528,
+            mlp_features: list = [384],
+            d_model: int = 768,
+            nhead: int = 8,
+            num_layers: int = 4,
+            kernel_size: int = 31,
+            dropout: float = 0.1,
+            optimizer: DictConfig = None,
+            lr_scheduler: DictConfig = None,
+            decoder: Any = None,
+            **kwargs,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.debug = kwargs.get("debug", False)
+
+        self.model = EMGConformerCTC(
+            in_features=in_features,
+            mlp_features=mlp_features,
+            d_model=d_model,
+            nhead=nhead,
+            num_layers=num_layers,
+            num_classes=charset().num_classes,
+            kernel_size=kernel_size,
+            dropout=dropout,
+        )
+
+        nn.init.normal_(self.model.ctc_head.weight, mean = 0, std=0.001)
+        nn.init.constant_(self.model.ctc_head.bias, -math.log(charset().num_classes))
+
+        self.ctc_loss = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
+
+        if decoder == "greedy":
+            self.decoder = CTCGreedyDecoder()
+        elif isinstance(decoder, (dict, DictConfig)):
+            self.decoder = hydra.utils.instantiate(decoder)
+        else:
+            self.decoder = decoder
+
+        metrics = MetricCollection([CharacterErrorRates()])
+        self.metrics = nn.ModuleDict({
+            f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
+            for phase in ["train", "val", "test"]
+        })
+
+    def forward(self, x):
+        return self.model(x)  # (T, N, num_classes)
+
+    def _step(self, phase, batch, batch_idx):
+        inputs = batch["inputs"]
+        targets = batch["targets"]
+        input_lengths = batch["input_lengths"]
+        target_lengths = batch["target_lengths"]
+
+        # Filter zero-length targets
+        valid = target_lengths > 0
+        if valid.sum() == 0:
+            return None
+
+        inputs = inputs[:, valid]
+        targets = targets[:, valid]
+        input_lengths = input_lengths[valid]
+        target_lengths = target_lengths[valid]
+        N = valid.sum().item()
+
+        emissions = self.forward(inputs)  # (T, N, num_classes)
+
+        T = emissions.size(0)
+        input_lengths_clamped = input_lengths.clamp(max=T).cpu().long()
+        target_lengths_cpu = target_lengths.cpu().long()
+
+        loss = self.ctc_loss(
+            emissions,
+            targets.transpose(0, 1),  # (N, S)
+            input_lengths_clamped,
+            target_lengths_cpu,
+        )
+
+        self.log(f"{phase}/loss", loss, batch_size=N, prog_bar=True, sync_dist=True)
+
+        if self.debug and batch_idx % 250 == 0:
+            preds = emissions.argmax(dim=-1)
+            blank_ratio = (preds == charset().null_class).float().mean().item()
+            print(f"[{phase}] batch {batch_idx}: loss={loss.item():.3f}  blank={blank_ratio:.3f}")
+
+        if self.decoder and phase != "train" and target_lengths_cpu.sum() > 0:
+            emissions_np = emissions.detach().cpu().numpy()
+            targets_np = targets.cpu().numpy()
+            metrics = self.metrics[f"{phase}_metrics"]
+            for i in range(N):
+                tgt_len = int(target_lengths_cpu[i])
+                elen = int(input_lengths_clamped[i])
+                self.decoder.reset()
+                pred = self.decoder.decode(
+                    emissions=emissions_np[:elen, i, :],
+                    timestamps=np.arange(elen),
+                )
+                target_data = LabelData.from_labels(targets_np[:tgt_len, i])
+                metrics.update(prediction=pred, target=target_data)
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        return self._step("train", batch, batch_idx)
+
+    def validation_step(self, batch, batch_idx):
+        return self._step("val", batch, batch_idx)
+
+    def test_step(self, batch, batch_idx):
+        return self._step("test", batch, batch_idx)
+
+    def on_train_epoch_start(self):
+        opt = self.optimizers()
+        if opt is not None:
+            lr = opt.param_groups[0]['lr']
+            self.log('train/lr', lr, on_epoch=True, prog_bar=False)
+
+    def on_train_epoch_end(self):
+        computed = self.metrics["train_metrics"].compute()
+        self.log_dict(computed, sync_dist=True)
+        self.metrics["train_metrics"].reset()
+
+    def on_validation_epoch_end(self):
+        computed = self.metrics["val_metrics"].compute()
+        self.log_dict(computed, sync_dist=True)
+        self.metrics["val_metrics"].reset()
+
+    def on_test_epoch_end(self):
+        computed = self.metrics["test_metrics"].compute()
+        self.log_dict(computed, sync_dist=True)
+        self.metrics["test_metrics"].reset()
+
+    def configure_optimizers(self):
+        optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.parameters())
+        if self.hparams.lr_scheduler:
+            scheduler = hydra.utils.instantiate(
+                self.hparams.lr_scheduler.scheduler,
+                optimizer=optimizer,
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": self.hparams.lr_scheduler.get("interval", "epoch"),
+                    "monitor": self.hparams.lr_scheduler.get("monitor", None),
+                },
+            }
+        return optimizer    
