@@ -1,0 +1,22 @@
+==============================================================
+  BEST MODEL
+==============================================================
+  Name            : CNN/RNN-LSTM | log_spectrogram
+  Model type      : cnn_lstm_ctc
+  Test CER        : 13.334774017333984
+  Best val CER    : 12.339388847351074 @ epoch 141
+
+  Full ranking (by test CER, or best val CER if test unavailable):
+  1.  CNN/RNN-LSTM | log_spectrogram              CER = 13.33%  <-- BEST
+  2.  CNN/RNN-LSTM | log_spectrogram_plus         CER = 14.37%
+  3.  CNN/RNN-GRU | log_spectrogram               CER = 15.78%
+  4.  CNN/RNN-GRU | log_spectrogram_plus          CER = 17.33%
+
+  Winning hyperparameters:
+    transforms: log_spectrogram
+    batch_size: 32
+    lr_scheduler: linear_warmup_cosine_annealing
+    rnn_num_layers: 2
+    rnn_hidden_size: 384
+    rnn_bidirectional: True
+==============================================================

@@ -113,9 +113,11 @@ def main(config: DictConfig):
         trainer.fit(module, datamodule, ckpt_path=resume_from_checkpoint)
 
         # Load best checkpoint
-        module = module.load_from_checkpoint(
-            trainer.checkpoint_callback.best_model_path
-        )
+        best_model_path = trainer.checkpoint_callback.best_model_path
+        if best_model_path and os.path.isfile(best_model_path):
+            module = module.load_from_checkpoint(best_model_path)
+        else:
+            log.info("No best checkpoint found. Skipping load.")
 
     # Validate and test on the best checkpoint (if training), or on the
     # loaded `config.checkpoint` (otherwise)
