@@ -1,4 +1,10 @@
 # C147/247 Final Project
+## Branch Clarification
+The main branch is derived from https://github.com/Calvin-Pang/emg2qwerty plut additional data augmentation implementation from Hao Zhang
+The hibird branch accounts for CNN + RNN hybrid model implementation from Michael Branch
+The ResNet branch accounts for ResNet model implementation from Sam Semseban
+The transformer branch accounts for Transformer model implementation from Daniel Luzzatto 
+
 ### Winter 2026 
 
 This course project is built upon the emg2qwerty work from Meta. The first section of this README provides some guidance for working with the repo and contains a running list of FAQs. **Note that the rest of the README is from the original repo and we encourage you to take a look at their work.**
