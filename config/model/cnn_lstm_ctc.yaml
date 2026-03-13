@@ -1,6 +1,6 @@
 # @package _global_
 module:
-  _target_: emg2qwerty.cnn_lstm_model.CNNLSTMCTCModule
+  _target_: emg2qwerty.lightning.CNNLSTMCTCModule
   in_features: 528
   mlp_features: [384]
   block_channels: [24, 24, 24, 24]

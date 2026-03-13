@@ -1,6 +1,6 @@
 # @package _global_
 module:
-  _target_: emg2qwerty.pure_rnn.PureRNNCTCModule
+  _target_: emg2qwerty.lightning.PureRNNCTCModule
   in_features: 528       # = 16 electrodes × 33 freq bins (n_fft//2+1)
   mlp_features: [384]    # MLP hidden/output size; num_features = 2 × 384 = 768
   rnn_hidden_size: 384   # GRU hidden units per direction; output = 768 = num_features
