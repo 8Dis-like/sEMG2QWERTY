@@ -7,6 +7,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
+import hydra
 
 import numpy as np
 import pytorch_lightning as pl
@@ -28,6 +29,9 @@ from emg2qwerty.modules import (
 )
 from emg2qwerty.resnet import ResNet1DEncoder
 from emg2qwerty.transforms import Transform
+from emg2qwerty.decoder import CTCGreedyDecoder
+from emg2qwerty.vis_transformer import ConvVit
+import torch.nn.functional as F
 
 
 class WindowedEMGDataModule(pl.LightningDataModule):
@@ -416,3 +420,181 @@ class ResNetCTCModule(pl.LightningModule):
             optimizer_config=self.hparams.optimizer,
             lr_scheduler_config=self.hparams.lr_scheduler,
         )
+
+
+class ConvVitCTCModule(pl.LightningModule):
+
+    def __init__(
+        self,
+        n_filters1: int,
+        n_filters2: int = 128,
+        n_head: int = 8,
+        n_layers: int = 2,
+        optimizer: DictConfig = None,
+        lr_scheduler: DictConfig = None,
+        decoder: Any = None,
+        **kwargs
+    ):
+        super().__init__()
+
+        self.save_hyperparameters()
+
+        self.debug = kwargs.get("debug", False)
+
+        self.charset = charset()
+
+        self.model = ConvVit(
+            n_filters1=n_filters1,
+            n_filters2=n_filters2,
+            n_head=n_head,
+            n_layers=n_layers,
+        )
+
+        self.temporal_downsample = nn.Conv1d(
+            in_channels=n_filters2,
+            out_channels=n_filters2,
+            kernel_size=3,
+            stride=2,
+            padding=1,
+        )
+
+        self.temporal_encoder = TDSConvEncoder(
+            num_features=n_filters2,
+            block_channels=(n_filters2 // 4,) * 4,
+            kernel_width=32,
+        )
+
+        self.classifier = nn.Linear(n_filters2, self.charset.num_classes)
+        nn.init.zeros_(self.classifier.weight)
+        nn.init.zeros_(self.classifier.bias)
+
+        for m in self.temporal_encoder.modules():
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
+                nn.init.xavier_normal_(m.weight, gain=0.1)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        self.ctc_loss = nn.CTCLoss(
+            blank=self.charset.null_class,
+            zero_infinity=True
+        )
+
+        if isinstance(decoder, (dict, DictConfig)):
+            self.decoder = hydra.utils.instantiate(decoder)
+        elif decoder == "greedy":
+            self.decoder = CTCGreedyDecoder()
+        else:
+            self.decoder = decoder
+
+        metrics = MetricCollection([CharacterErrorRates()])
+        self.metrics = nn.ModuleDict({
+            f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
+            for phase in ["train", "val", "test"]
+        })
+
+    def forward(self, x):
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        return self._step("train", batch, batch_idx)
+
+    def validation_step(self, batch, batch_idx):
+        return self._step("val", batch, batch_idx)
+
+    def test_step(self, batch, batch_idx):
+        return self._step("test", batch, batch_idx)
+
+    def configure_optimizers(self):
+        optimizer = hydra.utils.instantiate(
+            self.hparams.optimizer,
+            params=self.parameters()
+        )
+        if self.hparams.lr_scheduler:
+            scheduler = hydra.utils.instantiate(
+                self.hparams.lr_scheduler,
+                optimizer=optimizer
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                }
+            }
+        return optimizer
+
+    def _step(self, phase: str, batch, batch_idx: int = 0):
+        inputs = batch["inputs"]
+        targets = batch["targets"]
+        input_lengths = batch["input_lengths"]
+        target_lengths = batch["target_lengths"]
+
+        T, N, C, H, W = inputs.shape
+
+        frame_features = self.model(inputs.reshape(-1, C, H, W))
+        frame_features = frame_features.view(T, N, -1)
+
+        x = frame_features.permute(1, 2, 0)
+        x = self.temporal_downsample(x)
+        frame_features = x.permute(2, 0, 1)
+        input_lengths_ds = (input_lengths - 1) // 2 + 1
+
+        temporal_out = self.temporal_encoder(frame_features)
+
+        emissions = F.log_softmax(
+            self.classifier(temporal_out), dim=-1
+        ).contiguous()
+
+        T_diff = frame_features.size(0) - temporal_out.size(0)
+        emission_lengths = (input_lengths_ds - T_diff).cpu().to(torch.long).clamp(min=0)
+
+        target_lengths_cpu = target_lengths.cpu().to(torch.long)
+
+        if target_lengths_cpu.sum() > 0:
+            loss = self.ctc_loss(
+                log_probs=emissions,
+                targets=targets.transpose(0, 1),
+                input_lengths=emission_lengths,
+                target_lengths=target_lengths_cpu,
+            )
+        else:
+            loss = torch.tensor(0.0, device=inputs.device, requires_grad=True)
+
+        self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True, prog_bar=True)
+
+        if self.decoder and phase != "train" and target_lengths_cpu.sum() > 0:
+            emissions_np = emissions.detach().cpu().numpy()
+            targets_np = targets.cpu().numpy()
+            metrics = self.metrics[f"{phase}_metrics"]
+            emission_lengths_list = emission_lengths.tolist()
+
+            for i in range(N):
+                tgt_len = int(target_lengths_cpu[i])
+                if tgt_len == 0:
+                    continue
+
+                elen = emission_lengths_list[i]
+                self.decoder.reset()
+                pred = self.decoder.decode(
+                    emissions=emissions_np[:elen, i, :],
+                    timestamps=np.arange(elen),
+                )
+                target_data = LabelData.from_labels(targets_np[:tgt_len, i])
+                metrics.update(prediction=pred, target=target_data)
+
+        return loss
+
+    def _epoch_end(self, phase: str) -> None:
+        metrics = self.metrics[f"{phase}_metrics"]
+        self.log_dict(metrics.compute(), sync_dist=True)
+        metrics.reset()
+
+    def on_train_epoch_end(self) -> None:
+        self._epoch_end("train")
+
+    def on_validation_epoch_end(self) -> None:
+        self._epoch_end("val")
+
+    def on_test_epoch_end(self) -> None:
+        self._epoch_end("test")
