@@ -1,0 +1,28 @@
+# @package _global_
+
+# Conformer-based CTC model for spectrogram features.
+# Usage: python emg2qwerty/train.py experiment=conformer_ctc
+
+module:
+  _target_: emg2qwerty.lightning.ConformerCTCModule
+  in_features: 528
+  mlp_features: [384]
+  d_model: 512
+  nhead: 8
+  num_layers: 4
+  kernel_size: 31
+  dropout: 0.1
+
+datamodule:
+  _target_: emg2qwerty.lightning.WindowedEMGDataModule
+  window_length: 8000
+  padding: [1800, 200]
+
+trainer:
+  max_epochs: 300
+  gradient_clip_val: 1.0
+
+optimizer:
+  lr: 5e-5
+
+lr_scheduler: linear_warmup_cosine_annealing
