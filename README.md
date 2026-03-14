@@ -1,13 +1,30 @@
 # C147/247 Final Project
-## Branch Clarification
-The main branch is derived from https://github.com/Calvin-Pang/emg2qwerty plut additional data augmentation implementation from Hao Zhang
-The hibird branch accounts for CNN + RNN hybrid model implementation from Michael Branch
-The ResNet branch accounts for ResNet model implementation from Sam Semseban
-The transformer branch accounts for Transformer model implementation from Daniel Luzzatto 
+### Winter 2026
 
-### Winter 2026 
+This course project builds upon the **emg2qwerty** work released by Meta. The first section of this README provides guidance for working with the repository and contains a running list of FAQs. **Note that the remainder of this README comes from the original repository, and we encourage readers to explore their work.**
 
-This course project is built upon the emg2qwerty work from Meta. The first section of this README provides some guidance for working with the repo and contains a running list of FAQs. **Note that the rest of the README is from the original repo and we encourage you to take a look at their work.**
+In this project we investigate several deep learning architectures for decoding continuous QWERTY keystrokes from surface electromyography (sEMG) signals. Our goal is to evaluate how different sequence modeling paradigms affect decoding performance.
+
+We implemented and compared the following model families:
+
+- **Convolutional models**:  
+  - **TDS-Conv** (baseline from the original emg2qwerty repository)  
+  - **1D ResNet** operating directly on raw sEMG signals
+
+- **Hybrid CNN–RNN models**:  
+  - **TDS + BiGRU**  
+  - **TDS + BiLSTM**
+
+- **Pure recurrent models**:  
+  - **Deep residual BiGRU**
+
+- **Attention-based models**:  
+  - **Transformer encoder**  
+  - **Conformer encoder**
+
+In addition to architectural comparisons, we evaluate multiple **data augmentation pipelines** designed to model the physical properties of sEMG signals, including electrode rotation, temporal misalignment between wrist cuffs, and electrode contact variability.
+
+This work was completed as a course project for **Neural Networks and Deep Learning (ECE C147A / C247A)** at **UCLA**. We would like to thank **Professor Jonathan Kao** for the course and guidance that made this project possible.
 
 ## Guiding Tips + FAQs
 _Last updated 2/13/2025_
